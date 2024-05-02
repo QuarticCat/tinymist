@@ -135,7 +135,6 @@ impl CompileHandler {
 
 pub struct CompileDriver {
     pub(super) inner: CompileDriverInner,
-    #[allow(unused)]
     pub(super) handler: CompileHandler,
     pub(super) analysis: Analysis,
     pub(super) periscope: PeriscopeRenderer,
