@@ -45,12 +45,13 @@ impl Default for Runtimes {
 static RUNTIMES: Lazy<Runtimes> = Lazy::new(Default::default);
 
 /// The main entry point.
+#[tokio::main(flavor = "current_thread")]
 fn main() -> anyhow::Result<()> {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 
     // Start logging
-    let _ = {
+    {
         use log::LevelFilter::*;
         env_logger::builder()
             .filter_module("tinymist", Info)
@@ -58,8 +59,8 @@ fn main() -> anyhow::Result<()> {
             .filter_module("typst_ts", Info)
             .filter_module("typst_ts_compiler::service::compile", Info)
             .filter_module("typst_ts_compiler::service::watch", Info)
-            .try_init()
-    };
+            .init();
+    }
 
     // Parse command line arguments
     let args = CliArguments::parse();

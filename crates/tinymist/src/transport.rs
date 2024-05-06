@@ -1,10 +1,9 @@
-use std::{
-    io::{self, BufRead, Read, Write},
-    thread,
-};
+use std::io::{self, Write};
+use std::pin::Pin;
+use std::task;
 
-use crossbeam_channel::{bounded, Receiver, Sender};
-use lsp_server::{Connection, Message};
+use futures::{AsyncRead, AsyncWrite};
+use tokio_util::compat::TokioAsyncReadCompatExt;
 
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
@@ -17,155 +16,59 @@ pub struct MirrorArgs {
     pub replay: String,
 }
 
-/// Note that we must have our logging only write out to stderr.
-pub fn with_stdio_transport(
-    args: MirrorArgs,
-    f: impl FnOnce(Connection, &mut bool) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    // Set up input and output
-    let replay = args.replay.clone();
-    let mirror = args.mirror.clone();
-    let i = move || -> Box<dyn BufRead> {
-        if !replay.is_empty() {
-            // Get input from file
-            let file = std::fs::File::open(&replay).unwrap();
-            let file = std::io::BufReader::new(file);
-            Box::new(file)
-        } else if mirror.is_empty() {
-            // Get input from stdin
-            let stdin = std::io::stdin().lock();
-            Box::new(stdin)
+pub async fn get_io(args: MirrorArgs) -> (Box<dyn AsyncRead>, Box<dyn AsyncWrite>) {
+    let input: Box<dyn AsyncRead> = if !args.replay.is_empty() {
+        // Get input from file.
+        let file = tokio::fs::File::open(&args.replay).await.unwrap();
+        let file = tokio::io::BufReader::new(file);
+        Box::new(TokioAsyncReadCompatExt::compat(file))
+    } else {
+        // Get input from stdin.
+        #[cfg(unix)]
+        let stdin = async_lsp::stdio::PipeStdin::lock_tokio().unwrap();
+        #[cfg(not(unix))]
+        let stdin = TokioAsyncReadCompatExt::compat(tokio::io::stdin());
+
+        if !args.mirror.is_empty() {
+            // Mirror to file.
+            let file = std::fs::File::create(&args.replay).unwrap();
+            let file = std::io::BufWriter::new(file);
+            Box::new(MirrorWriter(Box::pin(stdin), file))
         } else {
-            let file = std::fs::File::create(&mirror).unwrap();
-            let stdin = std::io::stdin().lock();
-            Box::new(MirrorWriter(stdin, file, std::sync::Once::new()))
+            Box::new(stdin)
         }
     };
-    let o = || std::io::stdout().lock();
 
-    // Create the transport. Includes the stdio (stdin and stdout) versions but this
-    // could also be implemented to use sockets or HTTP.
-    let (sender, receiver, io_threads) = io_transport(i, o);
-    let connection = Connection { sender, receiver };
+    #[cfg(unix)]
+    let stdout = async_lsp::stdio::PipeStdout::lock_tokio().unwrap();
+    #[cfg(not(unix))]
+    let stdout = tokio_util::compat::TokioAsyncWriteCompatExt::compat_write(tokio::io::stdout());
 
-    // Start the LSP server
-    let mut force_exit = false;
-
-    f(connection, &mut force_exit)?;
-
-    if !force_exit {
-        io_threads.join()?;
-    }
-
-    Ok(())
+    (input, Box::new(stdout))
 }
 
-/// Creates an LSP connection via io.
-///
-/// # Example
-///
-/// ```
-/// use std::io::{stdin, stdout};
-/// use tinymist::transport::{io_transport, IoThreads};
-/// use lsp_server::Message;
-/// use crossbeam_channel::{bounded, Receiver, Sender};
-/// pub fn stdio_transport() -> (Sender<Message>, Receiver<Message>, IoThreads) {
-///   io_transport(|| stdin().lock(), || stdout().lock())
-/// }
-/// ```
-pub fn io_transport<I: BufRead, O: Write>(
-    inp: impl FnOnce() -> I + Send + Sync + 'static,
-    out: impl FnOnce() -> O + Send + Sync + 'static,
-) -> (Sender<Message>, Receiver<Message>, IoThreads) {
-    let (writer_sender, writer_receiver) = bounded::<Message>(0);
-    let writer = thread::spawn(move || {
-        let mut out = out();
-        let res = writer_receiver
-            .into_iter()
-            .try_for_each(|it| it.write(&mut out));
+// Pin<Box<R>> introduces an extra layer of indirection.
+// But this is not a hotspot and it makes the code simpler.
+struct MirrorWriter<R, W>(Pin<Box<R>>, W);
 
-        log::info!("writer thread finished");
-        res
-    });
-    let (reader_sender, reader_receiver) = bounded::<Message>(0);
-    let reader = thread::spawn(move || {
-        let mut inp = inp();
-        while let Some(msg) = Message::read(&mut inp)? {
-            let is_exit = matches!(&msg, Message::Notification(n) if n.method == "exit");
+impl<R: AsyncRead, W: Write + Unpin> AsyncRead for MirrorWriter<R, W> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+        buf: &mut [u8],
+    ) -> task::Poll<io::Result<usize>> {
+        let this = self.get_mut();
 
-            log::trace!("sending message {:#?}", msg);
-            reader_sender
-                .send(msg)
-                .expect("receiver was dropped, failed to send a message");
+        // Read from input.
+        let task::Poll::Ready(res) = this.0.as_mut().poll_read(cx, buf)? else {
+            return task::Poll::Pending;
+        };
 
-            if is_exit {
-                break;
-            }
+        // Write to file.
+        if let Err(err) = this.1.write(&buf[..res]) {
+            log::warn!("failed to write to mirror: {err}");
         }
 
-        log::info!("reader thread finished");
-        Ok(())
-    });
-    let threads = IoThreads { reader, writer };
-    (writer_sender, reader_receiver, threads)
-}
-
-/// A pair of threads for reading and writing LSP messages.
-pub struct IoThreads {
-    reader: thread::JoinHandle<io::Result<()>>,
-    writer: thread::JoinHandle<io::Result<()>>,
-}
-
-impl IoThreads {
-    /// Waits for the reader and writer threads to finish.
-    pub fn join(self) -> io::Result<()> {
-        match self.reader.join() {
-            Ok(r) => r?,
-            Err(err) => {
-                eprintln!("reader panicked!");
-                std::panic::panic_any(err)
-            }
-        }
-        match self.writer.join() {
-            Ok(r) => r,
-            Err(err) => {
-                eprintln!("writer panicked!");
-                std::panic::panic_any(err);
-            }
-        }
-    }
-}
-
-struct MirrorWriter<R: Read, W: Write>(R, W, std::sync::Once);
-
-impl<R: Read, W: Write> Read for MirrorWriter<R, W> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let res = self.0.read(buf)?;
-
-        if let Err(err) = self.1.write_all(&buf[..res]) {
-            self.2.call_once(|| {
-                log::warn!("failed to write to mirror: {err}");
-            });
-        }
-
-        Ok(res)
-    }
-}
-
-impl<R: Read + BufRead, W: Write> BufRead for MirrorWriter<R, W> {
-    fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        self.0.fill_buf()
-    }
-
-    fn consume(&mut self, amt: usize) {
-        let buf = self.0.fill_buf().unwrap();
-
-        if let Err(err) = self.1.write_all(&buf[..amt]) {
-            self.2.call_once(|| {
-                log::warn!("failed to write to mirror: {err}");
-            });
-        }
-
-        self.0.consume(amt);
+        task::Poll::Ready(Ok(res))
     }
 }
