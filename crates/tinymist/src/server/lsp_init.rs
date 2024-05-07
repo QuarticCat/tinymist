@@ -241,8 +241,6 @@ impl Init {
         mut self,
         params: InitializeParams,
     ) -> (TypstLanguageServer, LspResult<InitializeResult>) {
-        // self.tracing_init();
-
         // Initialize configurations
         let cc = ConstConfig::from(&params);
         info!("initialized with const_config {cc:?}");
@@ -338,20 +336,12 @@ impl Init {
 
         // Register these capabilities statically if the client does not support dynamic
         // registration
-        let semantic_tokens_provider = match service.config.semantic_tokens {
-            SemanticTokensMode::Enable if !cc.tokens_dynamic_registration => {
-                Some(get_semantic_tokens_options().into())
-            }
-            _ => None,
-        };
-        let document_formatting_provider = match service.config.formatter {
-            FormatterMode::Typstyle | FormatterMode::Typstfmt
-                if !cc.doc_fmt_dynamic_registration =>
-            {
-                Some(OneOf::Left(true))
-            }
-            _ => None,
-        };
+        let semantic_tokens_provider = (!cc.tokens_dynamic_registration
+            && service.config.semantic_tokens == SemanticTokensMode::Enable)
+            .then(|| get_semantic_tokens_options().into());
+        let document_formatting_provider = (!cc.doc_fmt_dynamic_registration
+            && service.config.formatter != FormatterMode::Disable)
+            .then(|| OneOf::Left(true));
 
         let res = InitializeResult {
             capabilities: ServerCapabilities {
@@ -361,9 +351,7 @@ impl Init {
                 signature_help_provider: Some(SignatureHelpOptions {
                     trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
                     retrigger_characters: None,
-                    work_done_progress_options: WorkDoneProgressOptions {
-                        work_done_progress: None,
-                    },
+                    ..Default::default()
                 }),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
@@ -393,9 +381,7 @@ impl Init {
                 semantic_tokens_provider,
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: service.exec_cmds.keys().map(ToString::to_string).collect(),
-                    work_done_progress_options: WorkDoneProgressOptions {
-                        work_done_progress: None,
-                    },
+                    ..Default::default()
                 }),
                 color_provider: Some(ColorProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
@@ -403,9 +389,7 @@ impl Init {
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
-                    work_done_progress_options: WorkDoneProgressOptions {
-                        work_done_progress: None,
-                    },
+                    work_done_progress_options: Default::default(),
                 })),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 workspace: Some(WorkspaceServerCapabilities {

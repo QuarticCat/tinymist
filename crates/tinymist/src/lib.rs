@@ -28,22 +28,15 @@
 
 // pub mod formatting;
 mod actor;
-pub mod harness;
 mod resource;
 mod server;
 mod state;
-mod task;
 mod tools;
 pub mod transport;
 mod utils;
 mod world;
-pub use crate::harness::LspHost;
 pub use server::compiler;
 pub use server::compiler_init;
 pub use server::lsp::*;
 pub use server::lsp_init::*;
 pub use world::{CompileFontOpts, CompileOnceOpts, CompileOpts, LspWorld, LspWorldBuilder};
-
-use lsp_server::ResponseError;
-
-type LspResult<Res> = Result<Res, ResponseError>;

@@ -20,7 +20,6 @@ pub async fn get_io(args: MirrorArgs) -> (Box<dyn AsyncRead>, Box<dyn AsyncWrite
     let input: Box<dyn AsyncRead> = if !args.replay.is_empty() {
         // Get input from file.
         let file = tokio::fs::File::open(&args.replay).await.unwrap();
-        let file = tokio::io::BufReader::new(file);
         Box::new(TokioAsyncReadCompatExt::compat(file))
     } else {
         // Get input from stdin.
@@ -28,11 +27,9 @@ pub async fn get_io(args: MirrorArgs) -> (Box<dyn AsyncRead>, Box<dyn AsyncWrite
         let stdin = async_lsp::stdio::PipeStdin::lock_tokio().unwrap();
         #[cfg(not(unix))]
         let stdin = TokioAsyncReadCompatExt::compat(tokio::io::stdin());
-
         if !args.mirror.is_empty() {
             // Mirror to file.
             let file = std::fs::File::create(&args.replay).unwrap();
-            let file = std::io::BufWriter::new(file);
             Box::new(MirrorWriter(Box::pin(stdin), file))
         } else {
             Box::new(stdin)

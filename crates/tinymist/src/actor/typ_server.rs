@@ -35,7 +35,7 @@ use typst_ts_core::{
     TypstDocument, TypstFileId,
 };
 
-use crate::{task::BorrowTask, utils};
+use crate::utils;
 
 pub trait EntryStateExt {
     fn is_inactive(&self) -> bool;
@@ -64,6 +64,11 @@ enum Interrupt<Ctx> {
     /// Request compiler to stop.
     Settle(oneshot::Sender<()>),
 }
+
+/// A task that can be sent to the context (compiler/render thread)
+///
+/// The internal function will be dereferenced and called on the context.
+pub type BorrowTask<Ctx> = Box<dyn FnOnce(&mut Ctx) + Send + 'static>;
 
 /// Responses from the compiler thread.
 enum CompilerResponse {
