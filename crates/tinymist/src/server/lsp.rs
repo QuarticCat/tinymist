@@ -1,5 +1,6 @@
 //! tinymist LSP mode
 
+use std::future::ready;
 use std::ops::ControlFlow;
 
 use anyhow::Context;
@@ -8,19 +9,15 @@ use async_lsp::{LanguageServer, ResponseError};
 use lsp_types::request::*;
 use lsp_types::*;
 use tinymist_query::{self as q, url_to_path, SemanticTokenContext};
-use tokio::sync::mpsc;
-use typst::util::Deferred;
 use typst_ts_compiler::service::Compiler;
 use typst_ts_core::{error::prelude::*, ImmutPath};
 
 use super::lsp_init::*;
 use super::*;
-use crate::actor::editor::EditorRequest;
 use crate::actor::format::FormatRequest;
 use crate::actor::user_action::UserActionRequest;
 use crate::compiler::CompileServer;
-use crate::compiler_init::CompilerConstConfig;
-use crate::world::SharedFontResolver;
+use crate::world::CompileFontOpts;
 
 /// The object providing the language server functionality.
 pub struct LanguageState {
@@ -40,10 +37,11 @@ pub struct LanguageState {
 
     /* Configurations */
     /// User configuration from the editor.
-    pub config: Config,
+    pub config: LanguageConfig,
     /// Const configuration initialized at the start of the session.
-    /// For example, the position encoding.
-    pub const_config: ConstConfig,
+    pub const_config: ConstLanguageConfig,
+    /// Font configuration from CLI args.
+    pub font_opts: CompileFontOpts,
 
     /* Resources */
     /// The semantic token context.
@@ -53,35 +51,25 @@ pub struct LanguageState {
     /// The compilers for tasks
     pub dedicates: Vec<CompileServer>,
     /// The formatter thread running in backend.
-    /// Is some after initialize request.
     /// Note: The thread will exit if you drop the sender.
     pub format_thread: Option<crossbeam_channel::Sender<FormatRequest>>,
     /// The user action thread running in backend.
-    /// Is some after initialize request.
     /// Note: The thread will exit if you drop the sender.
     pub user_action_thread: Option<crossbeam_channel::Sender<UserActionRequest>>,
 }
 
 impl LanguageState {
-    pub fn new(
-        const_config: ConstConfig,
-        editor_tx: mpsc::UnboundedSender<EditorRequest>,
-        font: Deferred<SharedFontResolver>,
-    ) -> Self {
-        let tokens_ctx = SemanticTokenContext::new(
-            const_config.position_encoding,
-            const_config.tokens_overlapping_token_support,
-            const_config.tokens_multiline_token_support,
-        );
+    pub fn new(font_opts: CompileFontOpts) -> Self {
+        // let tokens_ctx = SemanticTokenContext::new(
+        //     const_config.position_encoding,
+        //     const_config.tokens_overlapping_token_support,
+        //     const_config.tokens_multiline_token_support,
+        // );
 
-        let primary = CompileServer::new(
-            Default::default(),
-            CompilerConstConfig {
-                position_encoding: const_config.position_encoding,
-            },
-            editor_tx,
-            font,
-        );
+        // let primary = CompileServer::new(
+        //     editor_tx,
+        //     font,
+        // );
 
         Self {
             sema_tokens_registered: false,
@@ -92,10 +80,11 @@ impl LanguageState {
             focusing: None,
 
             config: Default::default(),
-            const_config,
+            const_config: Default::default(),
+            font_opts,
 
-            tokens_ctx,
-            primary,
+            tokens_ctx: Default::default(),
+            primary: unimplemented!(),
             dedicates: Vec::new(),
             format_thread: None,
             user_action_thread: None,
@@ -132,7 +121,7 @@ macro_rules! query_tokens_cache {
 macro_rules! query_state {
     ($compiler:expr, $req:ident) => {{
         let fut = $compiler.steal_state(move |w, doc| $req.request(w, doc));
-        Box::pin(async move { fut.await.or_else(resp_err) })
+        Box::pin(async move { fut.await.or_else(internal_error) })
     }};
 }
 
@@ -140,9 +129,11 @@ macro_rules! query_state {
 macro_rules! query_world {
     ($compiler:expr, $req:ident) => {{
         let fut = $compiler.steal_world(move |w| $req.request(w));
-        Box::pin(async move { fut.await.or_else(resp_err) })
+        Box::pin(async move { fut.await.or_else(internal_error) })
     }};
 }
+
+// todo: complete logging or implement a logging layer
 
 impl LanguageServer for LanguageState {
     type Error = ResponseError;
@@ -151,11 +142,13 @@ impl LanguageServer for LanguageState {
     /* Lifecycle */
 
     fn initialize(&mut self, params: InitializeParams) -> ResponseFuture<Initialize> {
-        todo!()
+        let res = self.init(params);
+        Box::pin(ready(res))
     }
 
     fn initialized(&mut self, params: InitializedParams) -> Self::NotifyResult {
-        todo!()
+        self.inited(params);
+        ControlFlow::Continue(())
     }
 
     /* Notifications */

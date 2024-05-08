@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::bail;
 use itertools::Itertools;
-use log::info;
+use lsp_types::request::*;
 use lsp_types::*;
 use serde::Deserialize;
 use serde_json::{Map, Value as JsonValue};
@@ -11,12 +11,12 @@ use tokio::sync::mpsc;
 use typst::util::Deferred;
 use typst_ts_core::ImmutPath;
 
+use super::compiler_init::*;
+use super::lsp::*;
+use super::*;
 use crate::actor::editor::EditorActor;
-use crate::compiler_init::CompileConfig;
-use crate::harness::LspHost;
 use crate::utils::{try_, try_or};
 use crate::world::{ImmutDict, SharedFontResolver};
-use crate::{invalid_params, CompileFontOpts, LspResult, TypstLanguageServer};
 
 // todo: svelte-language-server responds to a Goto Definition request with
 // LocationLink[] even if the client does not report the
@@ -90,7 +90,7 @@ const CONFIG_ITEMS: &[&str] = &[
 
 /// The user configuration read from the editor.
 #[derive(Debug, Default, Clone)]
-pub struct Config {
+pub struct LanguageConfig {
     /// Specifies the root path of the project manually.
     pub notify_compile_status: bool,
     /// The compile configurations
@@ -103,7 +103,7 @@ pub struct Config {
     pub formatter_print_width: u32,
 }
 
-impl Config {
+impl LanguageConfig {
     /// Gets items for serialization.
     pub fn get_items() -> Vec<ConfigurationItem> {
         let sections = CONFIG_ITEMS
@@ -163,9 +163,8 @@ impl Config {
 /// Configuration set at initialization that won't change within a single
 /// session.
 #[derive(Debug, Clone, Default)]
-pub struct ConstConfig {
-    /// Determined position encoding, either UTF-8 or UTF-16.
-    /// Defaults to UTF-16 if not specified.
+pub struct ConstLanguageConfig {
+    /// Determined position encoding, either UTF-8 or UTF-16 (default).
     pub position_encoding: PositionEncoding,
     /// Allow dynamic registration of configuration changes.
     pub cfg_change_registration: bool,
@@ -181,16 +180,14 @@ pub struct ConstConfig {
     pub doc_fmt_dynamic_registration: bool,
 }
 
-impl From<&InitializeParams> for ConstConfig {
+impl From<&InitializeParams> for ConstLanguageConfig {
     fn from(params: &InitializeParams) -> Self {
         const DEFAULT_ENCODING: &[PositionEncodingKind] = &[PositionEncodingKind::UTF16];
 
         let position_encoding = {
             let general = params.capabilities.general.as_ref();
             let encodings = try_(|| Some(general?.position_encodings.as_ref()?.as_slice()));
-            let encodings = encodings.unwrap_or(DEFAULT_ENCODING);
-
-            if encodings.contains(&PositionEncodingKind::UTF8) {
+            if encodings.is_some_and(|e| e.contains(&PositionEncodingKind::UTF8)) {
                 PositionEncoding::Utf8
             } else {
                 PositionEncoding::Utf16
@@ -215,36 +212,13 @@ impl From<&InitializeParams> for ConstConfig {
     }
 }
 
-pub struct Init {
-    pub host: LspHost<TypstLanguageServer>,
-    pub handle: tokio::runtime::Handle,
-    pub compile_opts: CompileFontOpts,
-}
-
-impl Init {
-    /// The [`initialize`] request is the first request sent from the client to
-    /// the server.
-    ///
-    /// [`initialize`]: https://microsoft.github.io/language-server-protocol/specification#initialize
-    ///
-    /// This method is guaranteed to only execute once. If the client sends this
-    /// request to the server again, the server will respond with JSON-RPC
-    /// error code `-32600` (invalid request).
-    ///
-    /// # Panics
-    /// Panics if the const configuration is already initialized.
-    /// Panics if the cluster is already initialized.
-    ///
-    /// # Errors
-    /// Errors if the configuration could not be updated.
-    pub fn initialize(
-        mut self,
-        params: InitializeParams,
-    ) -> (TypstLanguageServer, LspResult<InitializeResult>) {
-        // Initialize configurations
-        let cc = ConstConfig::from(&params);
-        info!("initialized with const_config {cc:?}");
-        let mut config = Config {
+// todo: not yet fully migrated
+impl LanguageState {
+    pub(crate) fn init(&mut self, params: InitializeParams) -> ResponseResult<Initialize> {
+        // Initialize configurations.
+        let cc = ConstLanguageConfig::from(&params);
+        log::info!("initialized with const_config {cc:?}");
+        let mut config = LanguageConfig {
             compile: CompileConfig {
                 roots: match params.workspace_folders.as_ref() {
                     Some(roots) => roots
@@ -262,17 +236,13 @@ impl Init {
                 },
                 ..CompileConfig::default()
             },
-            ..Config::default()
+            ..LanguageConfig::default()
         };
-        let res = match &params.initialization_options {
-            Some(init) => config
-                .update(init)
-                .map_err(|e| e.to_string())
-                .map_err(invalid_params),
-            None => Ok(()),
+        if let Some(init) = &params.initialization_options {
+            config.update(init).or_else(invalid_params)?;
         };
 
-        // prepare fonts
+        // Prepare fonts.
         // todo: on font resolving failure, downgrade to a fake font book
         let font = {
             let mut opts = std::mem::take(&mut self.compile_opts);
@@ -286,64 +256,49 @@ impl Init {
                     opts.font_paths.clone_from(font_paths);
                 }
             }
-
             Deferred::new(|| SharedFontResolver::new(opts).expect("failed to create font book"))
         };
 
-        // Bootstrap server
+        // Bootstrap server.
         let (editor_tx, editor_rx) = mpsc::unbounded_channel();
 
-        let mut service = TypstLanguageServer::new(
-            self.host.clone(),
-            cc.clone(),
-            editor_tx,
-            font,
-            self.handle.clone(),
-        );
+        log::info!("initialized with config {:?}", config);
+        self.primary.config = config.compile.clone();
+        self.config = config;
 
-        if let Err(err) = res {
-            return (service, Err(err));
-        }
-
-        info!("initialized with config {config:?}", config = config);
-        service.primary.config = config.compile.clone();
-        service.config = config;
-
-        service.run_format_thread();
-        service.run_user_action_thread();
+        self.run_format_thread();
+        self.run_user_action_thread();
 
         let editor_actor = EditorActor::new(
             self.host.clone(),
             editor_rx,
-            service.config.compile.notify_compile_status,
+            self.config.compile.notify_compile_status,
         );
 
-        let fallback = service.config.compile.determine_default_entry_path();
-        let primary = service.server(
+        let fallback = self.config.compile.determine_default_entry_path();
+        let primary = self.server(
             "primary".to_owned(),
-            service.config.compile.determine_entry(fallback),
-            service.config.compile.determine_inputs(),
+            self.config.compile.determine_entry(fallback),
+            self.config.compile.determine_inputs(),
         );
-        if service.primary.compiler.is_some() {
+        if self.primary.compiler.is_some() {
             panic!("primary already initialized");
         }
-        service.primary.compiler = Some(primary);
+        self.primary.compiler = Some(primary);
 
-        // Run the cluster in the background after we referencing it
-        self.handle.spawn(editor_actor.run());
-
-        // Respond to the host (LSP client)
+        // Run the cluster in the background after we referencing it.
+        tokio::spawn(editor_actor.run());
 
         // Register these capabilities statically if the client does not support dynamic
-        // registration
+        // registration.
         let semantic_tokens_provider = (!cc.tokens_dynamic_registration
-            && service.config.semantic_tokens == SemanticTokensMode::Enable)
+            && self.config.semantic_tokens == SemanticTokensMode::Enable)
             .then(|| get_semantic_tokens_options().into());
         let document_formatting_provider = (!cc.doc_fmt_dynamic_registration
-            && service.config.formatter != FormatterMode::Disable)
+            && self.config.formatter != FormatterMode::Disable)
             .then(|| OneOf::Left(true));
 
-        let res = InitializeResult {
+        Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 // todo: respect position_encoding
                 // position_encoding: Some(cc.position_encoding.into()),
@@ -380,7 +335,7 @@ impl Init {
                 )),
                 semantic_tokens_provider,
                 execute_command_provider: Some(ExecuteCommandOptions {
-                    commands: service.exec_cmds.keys().map(ToString::to_string).collect(),
+                    commands: self.exec_cmds.keys().map(ToString::to_string).collect(),
                     ..Default::default()
                 }),
                 color_provider: Some(ColorProviderCapability::Simple(true)),
@@ -408,9 +363,49 @@ impl Init {
                 ..Default::default()
             },
             ..Default::default()
-        };
+        })
+    }
 
-        (service, Ok(res))
+    pub(crate) fn inited(&mut self, params: InitializedParams) {
+        if self.const_config.tokens_dynamic_registration
+            && self.config.semantic_tokens == SemanticTokensMode::Enable
+        {
+            let err = self.enable_sema_token_caps(true);
+            if let Err(err) = err {
+                log::error!("could not register semantic tokens for initialization: {err}");
+            }
+        }
+
+        if self.const_config.doc_fmt_dynamic_registration
+            && self.config.formatter != FormatterMode::Disable
+        {
+            let err = self.enable_formatter_caps(true);
+            if let Err(err) = err {
+                log::error!("could not register formatter for initialization: {err}");
+            }
+        }
+
+        if self.const_config.cfg_change_registration {
+            log::trace!("setting up to request config change notifications");
+
+            const CONFIG_REGISTRATION_ID: &str = "config";
+            const CONFIG_METHOD_ID: &str = "workspace/didChangeConfiguration";
+
+            let err = self
+                .client
+                .register_capability(vec![Registration {
+                    id: CONFIG_REGISTRATION_ID.to_owned(),
+                    method: CONFIG_METHOD_ID.to_owned(),
+                    register_options: None,
+                }])
+                .err();
+            if let Some(err) = err {
+                log::error!("could not register to watch config changes: {err}");
+            }
+        }
+
+        self.primary.initialized(params);
+        log::info!("server initialized");
     }
 }
 
@@ -421,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_config_update() {
-        let mut config = Config::default();
+        let mut config = LanguageConfig::default();
 
         let root_path = if cfg!(windows) { "C:\\root" } else { "/root" };
 
@@ -452,7 +447,7 @@ mod tests {
 
     #[test]
     fn test_empty_extra_args() {
-        let mut config = Config::default();
+        let mut config = LanguageConfig::default();
         let update = json!({
             "typstExtraArgs": []
         });
@@ -462,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_reject_abnormal_root() {
-        let mut config = Config::default();
+        let mut config = LanguageConfig::default();
         let update = json!({
             "rootPath": ".",
         });
@@ -473,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_reject_abnormal_root2() {
-        let mut config = Config::default();
+        let mut config = LanguageConfig::default();
         let update = json!({
             "typstExtraArgs": ["--root", "."]
         });

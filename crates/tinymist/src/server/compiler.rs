@@ -15,7 +15,7 @@ use typst_ts_core::{config::compiler::DETACHED_ENTRY, ImmutPath};
 
 use crate::{
     actor::{editor::EditorRequest, export::ExportConfig, typ_client::CompileClientActor},
-    compiler_init::{CompileConfig, CompilerConstConfig},
+    compiler_init::{CompileConfig, ConstCompileConfig},
     harness::InitializedLspDriver,
     internal_error, invalid_params, method_not_found, run_query,
     state::MemoryFileMeta,
@@ -68,9 +68,6 @@ macro_rules! notify_fn {
 
 /// The object providing the language server functionality.
 pub struct CompileServer {
-    /// The language server client.
-    pub client: LspHost<CompileServer>,
-
     // State to synchronize with the client.
     /// Whether the server is shutting down.
     pub shutdown_requested: bool,
@@ -80,7 +77,7 @@ pub struct CompileServer {
     pub config: CompileConfig,
     /// Const configuration initialized at the start of the session.
     /// For example, the position encoding.
-    pub const_config: CompilerConstConfig,
+    pub const_config: ConstCompileConfig,
 
     // Command maps
     /// Extra commands provided with `textDocument/executeCommand`.
@@ -105,19 +102,15 @@ pub struct CompileServer {
 
 impl CompileServer {
     pub fn new(
-        client: LspHost<CompileServer>,
-        compile_config: CompileConfig,
-        const_config: CompilerConstConfig,
         editor_tx: mpsc::UnboundedSender<EditorRequest>,
         font: Deferred<SharedFontResolver>,
         handle: tokio::runtime::Handle,
     ) -> Self {
         CompileServer {
-            client,
             editor_tx,
             shutdown_requested: false,
-            config: compile_config,
-            const_config,
+            config: Default::default(),
+            const_config: Default::default(),
             font,
             compiler: None,
             handle,
@@ -129,7 +122,7 @@ impl CompileServer {
         }
     }
 
-    pub fn const_config(&self) -> &CompilerConstConfig {
+    pub fn const_config(&self) -> &ConstCompileConfig {
         &self.const_config
     }
 

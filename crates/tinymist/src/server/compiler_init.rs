@@ -298,19 +298,11 @@ impl CompileConfig {
 
 /// Configuration set at initialization that won't change within a single
 /// session.
-#[derive(Debug, Clone)]
-pub struct CompilerConstConfig {
+#[derive(Debug, Clone, Default)]
+pub struct ConstCompileConfig {
     /// Determined position encoding, either UTF-8 or UTF-16.
     /// Defaults to UTF-16 if not specified.
     pub position_encoding: PositionEncoding,
-}
-
-impl Default for CompilerConstConfig {
-    fn default() -> Self {
-        Self {
-            position_encoding: PositionEncoding::Utf16,
-        }
-    }
 }
 
 pub struct CompileInit {
@@ -359,7 +351,7 @@ impl LspDriver for CompileInit {
         let mut service = CompileServer::new(
             client,
             compile_config,
-            CompilerConstConfig {
+            ConstCompileConfig {
                 position_encoding: params
                     .position_encoding
                     .map(|x| match x.as_str() {

@@ -5,10 +5,8 @@ use std::path::PathBuf;
 use lsp_types::TextDocumentContentChangeEvent;
 use tinymist_query::{lsp_to_typst, CompilerQueryRequest, CompilerQueryResponse, PositionEncoding};
 use typst::{diag::FileResult, syntax::Source};
-use typst_ts_compiler::{
-    vfs::notify::{FileChangeSet, MemoryEvent},
-    Time,
-};
+use typst_ts_compiler::vfs::notify::{FileChangeSet, MemoryEvent};
+use typst_ts_compiler::Time;
 use typst_ts_core::{error::prelude::*, Bytes, Error, ImmutPath};
 
 use crate::{compiler::CompileServer, LanguageState};
