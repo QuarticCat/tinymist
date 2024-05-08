@@ -495,21 +495,13 @@ impl<Ctx> CompileClient<Ctx> {
     }
 
     /// Steal the compiler thread and run the given function.
-    pub fn steal<Ret: Send + 'static>(
-        &self,
-        f: impl FnOnce(&mut Ctx) -> Ret + Send + 'static,
-    ) -> ZResult<Ret> {
-        utils::threaded_receive(self.steal_inner(f)?)
-    }
-
-    /// Steal the compiler thread and run the given function.
-    pub async fn steal_async<Ret: Send + 'static>(
+    pub async fn steal<Ret: Send + 'static>(
         &self,
         f: impl FnOnce(&mut Ctx) -> Ret + Send + 'static,
     ) -> ZResult<Ret> {
         self.steal_inner(f)?
             .await
-            .map_err(map_string_err("failed to call steal_async"))
+            .map_err(map_string_err("failed to call steal"))
     }
 
     pub fn settle(&self) -> ZResult<()> {

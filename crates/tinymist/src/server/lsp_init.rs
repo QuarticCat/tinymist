@@ -162,7 +162,7 @@ impl Config {
 
 /// Configuration set at initialization that won't change within a single
 /// session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ConstConfig {
     /// Determined position encoding, either UTF-8 or UTF-16.
     /// Defaults to UTF-16 if not specified.

@@ -299,19 +299,11 @@ impl CompileClientActor {
     }
 
     /// Steal the compiler thread and run the given function.
-    pub fn steal<Ret: Send + 'static>(
+    pub async fn steal<Ret: Send + 'static>(
         &self,
         f: impl FnOnce(&mut CompileService) -> Ret + Send + 'static,
     ) -> ZResult<Ret> {
-        self.inner().steal(f)
-    }
-
-    /// Steal the compiler thread and run the given function.
-    pub async fn steal_async<Ret: Send + 'static>(
-        &self,
-        f: impl FnOnce(&mut CompileService) -> Ret + Send + 'static,
-    ) -> ZResult<Ret> {
-        self.inner().steal_async(f).await
+        self.inner().steal(f).await
     }
 
     pub fn settle(&mut self) {
@@ -432,7 +424,7 @@ impl CompileClientActor {
         Ok(())
     }
 
-    pub fn steal_state<T: Send + Sync + 'static>(
+    pub async fn steal_state<T: Send + Sync + 'static>(
         &self,
         f: impl FnOnce(&mut AnalysisContext, Option<VersionedDocument>) -> T + Send + Sync + 'static,
     ) -> anyhow::Result<T> {
@@ -440,13 +432,15 @@ impl CompileClientActor {
             let doc = compiler.success_doc();
             let c = &mut compiler.compiler.compiler;
             c.run_analysis(move |ctx| f(ctx, doc))
-        })?
+        })
+        .await?
     }
 
-    pub fn steal_world<T: Send + Sync + 'static>(
+    pub async fn steal_world<T: Send + Sync + 'static>(
         &self,
         f: impl FnOnce(&mut AnalysisContext) -> T + Send + Sync + 'static,
     ) -> anyhow::Result<T> {
-        self.steal(move |compiler| compiler.compiler.compiler.run_analysis(f))?
+        self.steal(move |compiler| compiler.compiler.compiler.run_analysis(f))
+            .await?
     }
 }
