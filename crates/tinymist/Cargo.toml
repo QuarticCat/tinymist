@@ -63,6 +63,9 @@ crossbeam-channel.workspace = true
 dhat = { version = "0.3.3", optional = true }
 chrono = { version = "0.4" }
 unicode-script = "0.5"
+tower-layer = "0.3.2"
+tower-service = "0.3.2"
+pin-project-lite = "0.2.13"
 base64.workspace = true
 
 [features]
