@@ -58,7 +58,10 @@ impl<Args, S> State<Args, S> {
         }
     }
 
-    fn notify(&mut self, notif: AnyNotification) -> ControlFlow<Result<()>> {
+    fn notify(&mut self, notif: AnyNotification) -> ControlFlow<Result<()>>
+    where
+        S: LspService,
+    {
         self.service()
             .map_or(ControlFlow::Continue(()), |s| s.notify(notif))
     }
