@@ -119,16 +119,16 @@ macro_rules! query_tokens_cache {
 
 // todo: create a trait for these requests and make it a function
 macro_rules! query_state {
-    ($compiler:expr, $req:ident) => {{
-        let fut = $compiler.steal_state(move |w, doc| $req.request(w, doc));
+    ($self:ident, $req:ident) => {{
+        let fut = $self.primary.compiler().steal_state(move |w, doc| $req.request(w, doc));
         Box::pin(async move { fut.await.or_else(internal_error) })
     }};
 }
 
 // todo: create a trait for these requests and make it a function
 macro_rules! query_world {
-    ($compiler:expr, $req:ident) => {{
-        let fut = $compiler.steal_world(move |w| $req.request(w));
+    ($self:ident, $req:ident) => {{
+        let fut = $self.primary.compiler().steal_world(move |w| $req.request(w));
         Box::pin(async move { fut.await.or_else(internal_error) })
     }};
 }
@@ -206,7 +206,7 @@ impl LanguageServer for LanguageState {
             position: params.text_document_position.position,
             explicit: params.context.is_some_and(|c| c.trigger_kind == invoked),
         };
-        query_state!(self.primary.compiler(), req)
+        query_state!(self, req)
     }
 
     fn semantic_tokens_full(
@@ -268,14 +268,14 @@ impl LanguageServer for LanguageState {
             path: url_to_path(params.text_document.uri),
             range: params.range,
         };
-        query_world!(self.primary.compiler(), req)
+        query_world!(self, req)
     }
 
     fn document_color(&mut self, params: DocumentColorParams) -> ResponseFuture<DocumentColor> {
         let req = q::DocumentColorRequest {
             path: url_to_path(params.text_document.uri),
         };
-        query_world!(self.primary.compiler(), req)
+        query_world!(self, req)
     }
 
     fn color_presentation(
@@ -295,7 +295,7 @@ impl LanguageServer for LanguageState {
             path: url_to_path(params.text_document),
             range: params.range,
         };
-        query_world!(self.primary.compiler(), req)
+        query_world!(self, req)
     }
 
     fn hover(&mut self, params: HoverParams) -> ResponseFuture<HoverRequest> {
@@ -304,22 +304,14 @@ impl LanguageServer for LanguageState {
             position: params.text_document_position_params.position,
         };
         self.implicit_focus_entry(|| Some(req.path.as_path().into()), 'h');
-        query_state!(self.primary.compiler(), req)
+        query_state!(self, req)
     }
-
-    // fn code_action(&mut self, params: CodeActionParams) ->
-    // ResponseFuture<CodeActionRequest> {     let req = q::CodeActionRequest {
-    //         path: url_to_path(params.text_document.uri),
-    //         range: params.range,
-    //     };
-    //    query_world!(self.primary.compiler(), req)
-    // }
 
     fn code_lens(&mut self, params: CodeLensParams) -> ResponseFuture<CodeLensRequest> {
         let req = q::CodeLensRequest {
             path: url_to_path(params.text_document.uri),
         };
-        query_world!(self.primary.compiler(), req)
+        query_world!(self, req)
     }
 
     fn folding_range(&mut self, params: FoldingRangeParams) -> ResponseFuture<FoldingRangeRequest> {
@@ -339,7 +331,7 @@ impl LanguageServer for LanguageState {
             path: url_to_path(params.text_document_position_params.text_document.uri),
             position: params.text_document_position_params.position,
         };
-        query_world!(self.primary.compiler(), req)
+        query_world!(self, req)
     }
 
     fn prepare_rename(
@@ -350,7 +342,7 @@ impl LanguageServer for LanguageState {
             path: url_to_path(params.text_document.uri),
             position: params.position,
         };
-        query_state!(self.primary.compiler(), req)
+        query_state!(self, req)
     }
 
     fn rename(&mut self, params: RenameParams) -> ResponseFuture<Rename> {
@@ -359,7 +351,7 @@ impl LanguageServer for LanguageState {
             position: params.text_document_position.position,
             new_name: params.new_name,
         };
-        query_state!(self.primary.compiler(), req)
+        query_state!(self, req)
     }
 
     fn definition(&mut self, params: GotoDefinitionParams) -> ResponseFuture<GotoDefinition> {
@@ -367,7 +359,7 @@ impl LanguageServer for LanguageState {
             path: url_to_path(params.text_document_position_params.text_document.uri),
             position: params.text_document_position_params.position,
         };
-        query_state!(self.primary.compiler(), req)
+        query_state!(self, req)
     }
 
     fn declaration(&mut self, params: GotoDeclarationParams) -> ResponseFuture<GotoDeclaration> {
@@ -375,7 +367,7 @@ impl LanguageServer for LanguageState {
             path: url_to_path(params.text_document_position_params.text_document.uri),
             position: params.text_document_position_params.position,
         };
-        query_world!(self.primary.compiler(), req)
+        query_world!(self, req)
     }
 
     fn references(&mut self, params: ReferenceParams) -> ResponseFuture<References> {
@@ -383,14 +375,14 @@ impl LanguageServer for LanguageState {
             path: url_to_path(params.text_document_position.text_document.uri),
             position: params.text_document_position.position,
         };
-        query_world!(self.primary.compiler(), req)
+        query_world!(self, req)
     }
 
     fn symbol(&mut self, params: WorkspaceSymbolParams) -> ResponseFuture<WorkspaceSymbolRequest> {
         let req = q::SymbolRequest {
             pattern: (!params.query.is_empty()).then_some(params.query),
         };
-        query_world!(self.primary.compiler(), req)
+        query_world!(self, req)
     }
 
     fn execute_command(&mut self, params: ExecuteCommandParams) -> ResponseFuture<ExecuteCommand> {
