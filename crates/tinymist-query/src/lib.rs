@@ -130,9 +130,10 @@ mod polymorphic {
     use super::prelude::*;
     use super::*;
 
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub enum PageSelection {
+        #[default]
         First,
         Merged,
     }

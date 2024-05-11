@@ -28,14 +28,14 @@ use self::{
     user_action::run_user_action_thread,
 };
 use crate::{
-    compiler::CompileServer,
+    compiler::CompileState,
     world::{ImmutDict, LspWorld, LspWorldBuilder},
     TypstLanguageServer,
 };
 
 type CompileDriverInner = CompileDriverImpl<LspWorld>;
 
-impl CompileServer {
+impl CompileState {
     pub fn server(
         &self,
         editor_group: String,

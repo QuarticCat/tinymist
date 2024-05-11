@@ -18,7 +18,7 @@ use typst_ts_core::config::compiler::EntryState;
 use typst_ts_core::{ImmutPath, TypstDict};
 
 use crate::actor::editor::EditorRequest;
-use crate::compiler::CompileServer;
+use crate::compiler::CompileState;
 use crate::harness::LspDriver;
 use crate::utils::{try_, try_or_default};
 use crate::world::{ImmutDict, SharedFontResolver};
@@ -320,7 +320,7 @@ pub struct CompileInitializeParams {
 impl LspDriver for CompileInit {
     type InitParams = CompileInitializeParams;
     type InitResult = ();
-    type InitializedSelf = CompileServer;
+    type InitializedSelf = CompileState;
 
     fn initialize(
         self,
@@ -348,7 +348,7 @@ impl LspDriver for CompileInit {
             Deferred::new(|| SharedFontResolver::new(opts).expect("failed to create font book"))
         };
 
-        let mut service = CompileServer::new(
+        let mut service = CompileState::new(
             client,
             compile_config,
             ConstCompileConfig {

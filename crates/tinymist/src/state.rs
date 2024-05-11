@@ -9,9 +9,9 @@ use typst_ts_compiler::vfs::notify::{FileChangeSet, MemoryEvent};
 use typst_ts_compiler::Time;
 use typst_ts_core::{error::prelude::*, Bytes, Error, ImmutPath};
 
-use crate::{compiler::CompileServer, LanguageState};
+use crate::{compiler::CompileState, LanguageState};
 
-impl CompileServer {
+impl CompileState {
     /// Focus main file to some path.
     pub fn do_change_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<bool, Error> {
         self.compiler
@@ -103,7 +103,7 @@ impl LanguageState {
     fn update_source(&self, files: FileChangeSet) -> Result<(), Error> {
         let primary = Some(self.primary());
         let clients_to_notify =
-            (primary.into_iter()).chain(self.dedicates.iter().map(CompileServer::compiler));
+            (primary.into_iter()).chain(self.dedicates.iter().map(CompileState::compiler));
 
         for client in clients_to_notify {
             client.add_memory_changes(MemoryEvent::Update(files.clone()));
@@ -184,7 +184,7 @@ impl LanguageState {
     }
 }
 
-impl CompileServer {
+impl CompileState {
     pub fn query(&self, query: CompilerQueryRequest) -> anyhow::Result<CompilerQueryResponse> {
         let client = self.compiler.as_ref().unwrap();
         LanguageState::query_on(client, query)

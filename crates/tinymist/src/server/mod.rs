@@ -4,28 +4,53 @@ pub mod lsp_init;
 pub mod compiler;
 pub mod compiler_init;
 
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::ready;
 
 use async_lsp::{ErrorCode, ResponseError};
 use futures::future::BoxFuture;
-use lsp_types::request::Request;
+use lsp_types::request::{ExecuteCommand, Request};
+use serde::Deserialize;
+use serde_json::{from_value, Value as JsonValue};
 
 type ResponseResult<R> = Result<<R as Request>::Result, ResponseError>;
 type ResponseFuture<R> = BoxFuture<'static, ResponseResult<R>>;
 
-fn resp_fut_ok<R: Request>(res: R::Result) -> ResponseFuture<R> {
+fn ok<R: Request>(res: R::Result) -> ResponseFuture<R> {
     Box::pin(ready(Ok(res)))
 }
 
-fn resp_fut_err<R: Request>(msg: impl Display) -> ResponseFuture<R> {
-    Box::pin(ready(internal_error(msg)))
+fn internal_error<R: Request>(msg: impl Display) -> ResponseFuture<R> {
+    Box::pin(Err(ResponseError::new(ErrorCode::INTERNAL_ERROR, msg)))
 }
 
-fn internal_error<R: Request>(msg: impl Display) -> ResponseResult<R> {
-    Err(ResponseError::new(ErrorCode::INTERNAL_ERROR, msg))
+fn invalid_params<R: Request>(msg: impl Display) -> ResponseFuture<R> {
+    Box::pin(Err(ResponseError::new(ErrorCode::INVALID_PARAMS, msg)))
 }
 
-fn invalid_params<R: Request>(msg: impl Display) -> ResponseResult<R> {
-    Err(ResponseError::new(ErrorCode::INVALID_PARAMS, msg))
+fn method_not_found<R: Request>(msg: impl Display) -> ResponseFuture<R> {
+    Box::pin(Err(ResponseError::new(ErrorCode::METHOD_NOT_FOUND, msg)))
+}
+
+type ExecCmdHandler<S> = fn(&mut S, Vec<JsonValue>) -> ResponseFuture<ExecuteCommand>;
+type ExecCmdMap<S> = HashMap<&'static str, ExecCmdHandler<S>>;
+
+/// Get a parsed command argument.
+/// Return `None` when no arg or parse failed.
+fn get_cmd_arg<'de, T: Deserialize<'de>>(args: &Vec<JsonValue>, idx: usize) -> Option<T> {
+    args.get(idx).and_then(|x| from_value::<T>(x).ok())
+}
+
+/// Get a parsed command argument.
+/// Return default when no arg.
+/// Return `None` when parse failed.
+fn get_cmd_arg_<'de, T: Deserialize<'de> + Default>(
+    args: &Vec<JsonValue>,
+    idx: usize,
+) -> Option<T> {
+    match args.get(idx) {
+        Some(arg) => from_value(arg).ok(),
+        None => Some(Default::default()),
+    }
 }

@@ -1,11 +1,8 @@
 //! tinymist LSP mode
 
-use std::future::ready;
 use std::ops::ControlFlow;
 
-use anyhow::Context;
 use async_lsp::{LanguageServer, ResponseError};
-
 use lsp_types::request::*;
 use lsp_types::*;
 use tinymist_query::{self as q, url_to_path, SemanticTokenContext};
@@ -16,7 +13,7 @@ use super::lsp_init::*;
 use super::*;
 use crate::actor::format::FormatRequest;
 use crate::actor::user_action::UserActionRequest;
-use crate::compiler::CompileServer;
+use crate::compiler::CompileState;
 use crate::world::CompileFontOpts;
 
 /// The object providing the language server functionality.
@@ -47,9 +44,9 @@ pub struct LanguageState {
     /// The semantic token context.
     pub tokens_ctx: SemanticTokenContext,
     /// The compiler for general purpose.
-    pub primary: CompileServer,
+    pub primary: CompileState,
     /// The compilers for tasks
-    pub dedicates: Vec<CompileServer>,
+    pub dedicates: Vec<CompileState>,
     /// The formatter thread running in backend.
     /// Note: The thread will exit if you drop the sender.
     pub format_thread: Option<crossbeam_channel::Sender<FormatRequest>>,
@@ -60,17 +57,6 @@ pub struct LanguageState {
 
 impl LanguageState {
     pub fn new(font_opts: CompileFontOpts) -> Self {
-        // let tokens_ctx = SemanticTokenContext::new(
-        //     const_config.position_encoding,
-        //     const_config.tokens_overlapping_token_support,
-        //     const_config.tokens_multiline_token_support,
-        // );
-
-        // let primary = CompileServer::new(
-        //     editor_tx,
-        //     font,
-        // );
-
         Self {
             sema_tokens_registered: false,
             formatter_registered: false,
@@ -84,7 +70,7 @@ impl LanguageState {
             font_opts,
 
             tokens_ctx: Default::default(),
-            primary: unimplemented!(),
+            primary: todo!(),
             dedicates: Vec::new(),
             format_thread: None,
             user_action_thread: None,
@@ -97,11 +83,11 @@ impl LanguageState {
 macro_rules! query_source {
     ($self:ident, $req:ident) => {{
         let Some(mem_file) = $self.primary.memory_changes.get(&$req.path) else {
-            return resp_fut_err(format!("file missing: {:?}", $req.path));
+            return internal_error(format!("file missing: {:?}", $req.path));
         };
         let source = mem_file.content.clone();
         // todo: pass source by value to avoid one extra clone
-        resp_fut_ok($req.request(&source, $self.const_config.position_encoding))
+        ok($req.request(&source, $self.const_config.position_encoding))
     }};
 }
 
@@ -110,17 +96,20 @@ macro_rules! query_source {
 macro_rules! query_tokens_cache {
     ($self:ident, $req:ident) => {{
         let Some(mem_file) = $self.primary.memory_changes.get(&$req.path) else {
-            return resp_fut_err(format!("file missing: {:?}", $req.path));
+            return internal_error(format!("file missing: {:?}", $req.path));
         };
         let source = mem_file.content.clone();
-        resp_fut_ok($req.request(&$self.tokens_ctx, source))
+        ok($req.request(&$self.tokens_ctx, source))
     }};
 }
 
 // todo: create a trait for these requests and make it a function
 macro_rules! query_state {
     ($self:ident, $req:ident) => {{
-        let fut = $self.primary.compiler().steal_state(move |w, doc| $req.request(w, doc));
+        let fut = $self
+            .primary
+            .compiler()
+            .steal_state(move |w, doc| $req.request(w, doc));
         Box::pin(async move { fut.await.or_else(internal_error) })
     }};
 }
@@ -128,7 +117,10 @@ macro_rules! query_state {
 // todo: create a trait for these requests and make it a function
 macro_rules! query_world {
     ($self:ident, $req:ident) => {{
-        let fut = $self.primary.compiler().steal_world(move |w| $req.request(w));
+        let fut = $self
+            .primary
+            .compiler()
+            .steal_world(move |w| $req.request(w));
         Box::pin(async move { fut.await.or_else(internal_error) })
     }};
 }
@@ -143,7 +135,7 @@ impl LanguageServer for LanguageState {
 
     fn initialize(&mut self, params: InitializeParams) -> ResponseFuture<Initialize> {
         let res = self.init(params);
-        Box::pin(ready(res))
+        ok(res)
     }
 
     fn initialized(&mut self, params: InitializedParams) -> Self::NotifyResult {
@@ -256,7 +248,7 @@ impl LanguageServer for LanguageState {
     fn formatting(&mut self, params: DocumentFormattingParams) -> ResponseFuture<Formatting> {
         // todo: remove format thread
         if self.config.formatter == FormatterMode::Disable {
-            return resp_fut_ok(None);
+            return ok(None);
         }
         todo!()
     }
@@ -287,7 +279,7 @@ impl LanguageServer for LanguageState {
             color: params.color,
             range: params.range,
         };
-        resp_fut_ok(req.request())
+        ok(req.request())
     }
 
     fn code_action(&mut self, params: CodeActionParams) -> ResponseFuture<CodeActionRequest> {
