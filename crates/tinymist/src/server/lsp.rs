@@ -1,82 +1,28 @@
 //! tinymist LSP mode
 
 use std::ops::ControlFlow;
+use std::path::{Path, PathBuf};
 
 use async_lsp::{LanguageServer, ResponseError};
 use lsp_types::request::*;
 use lsp_types::*;
+use serde::Serialize;
+use serde_json::to_value;
 use tinymist_query::{self as q, url_to_path, SemanticTokenContext};
+use typst::diag::StrResult;
+use typst::syntax::package::{PackageSpec, VersionlessPackageSpec};
 use typst_ts_compiler::service::Compiler;
-use typst_ts_core::{error::prelude::*, ImmutPath};
+use typst_ts_core::{error::prelude::*, Error as TypError, ImmutPath};
 
 use super::lsp_init::*;
 use super::*;
 use crate::actor::format::FormatRequest;
+use crate::actor::typ_client::CompileClientActor;
 use crate::actor::user_action::UserActionRequest;
 use crate::compiler::CompileState;
+use crate::tools::package::InitTask;
+use crate::tools::package::{self, determine_latest_version, TemplateSource};
 use crate::world::CompileFontOpts;
-
-/// The object providing the language server functionality.
-pub struct LanguageState {
-    /* States to synchronize with the client */
-    /// Whether the server has registered semantic tokens capabilities.
-    pub sema_tokens_registered: bool,
-    /// Whether the server has registered document formatter capabilities.
-    pub formatter_registered: bool,
-    /// Whether client is pinning a file.
-    pub pinning: bool,
-    /// The client focusing file.
-    pub focusing: Option<ImmutPath>,
-    /// The client ever focused implicitly by activities.
-    pub ever_focusing_by_activities: bool,
-    /// The client ever sent manual focusing request.
-    pub ever_manual_focusing: bool,
-
-    /* Configurations */
-    /// User configuration from the editor.
-    pub config: LanguageConfig,
-    /// Const configuration initialized at the start of the session.
-    pub const_config: ConstLanguageConfig,
-    /// Font configuration from CLI args.
-    pub font_opts: CompileFontOpts,
-
-    /* Resources */
-    /// The semantic token context.
-    pub tokens_ctx: SemanticTokenContext,
-    /// The compiler for general purpose.
-    pub primary: CompileState,
-    /// The compilers for tasks
-    pub dedicates: Vec<CompileState>,
-    /// The formatter thread running in backend.
-    /// Note: The thread will exit if you drop the sender.
-    pub format_thread: Option<crossbeam_channel::Sender<FormatRequest>>,
-    /// The user action thread running in backend.
-    /// Note: The thread will exit if you drop the sender.
-    pub user_action_thread: Option<crossbeam_channel::Sender<UserActionRequest>>,
-}
-
-impl LanguageState {
-    pub fn new(font_opts: CompileFontOpts) -> Self {
-        Self {
-            sema_tokens_registered: false,
-            formatter_registered: false,
-            ever_focusing_by_activities: false,
-            ever_manual_focusing: false,
-            pinning: false,
-            focusing: None,
-
-            config: Default::default(),
-            const_config: Default::default(),
-            font_opts,
-
-            tokens_ctx: Default::default(),
-            primary: todo!(),
-            dedicates: Vec::new(),
-            format_thread: None,
-            user_action_thread: None,
-        }
-    }
-}
 
 // todo: parallelization
 // todo: create a trait for these requests and make it a function
@@ -106,9 +52,11 @@ macro_rules! query_tokens_cache {
 // todo: create a trait for these requests and make it a function
 macro_rules! query_state {
     ($self:ident, $req:ident) => {{
+        if let Err(err) = $self.update_entry(&$req.path) {
+            return internal_error(format!("cannot update entry: {err:?}"));
+        }
         let fut = $self
-            .primary
-            .compiler()
+            .primary()
             .steal_state(move |w, doc| $req.request(w, doc));
         Box::pin(async move { fut.await.or_else(internal_error) })
     }};
@@ -117,12 +65,210 @@ macro_rules! query_state {
 // todo: create a trait for these requests and make it a function
 macro_rules! query_world {
     ($self:ident, $req:ident) => {{
-        let fut = $self
-            .primary
-            .compiler()
-            .steal_world(move |w| $req.request(w));
+        if let Err(err) = $self.update_entry(&$req.path) {
+            return internal_error(format!("cannot update entry: {err:?}"));
+        }
+        let fut = $self.primary().steal_world(move |w| $req.request(w));
         Box::pin(async move { fut.await.or_else(internal_error) })
     }};
+}
+
+/// The object providing the language server functionality.
+pub struct LanguageState {
+    /* States to synchronize with the client */
+    /// Whether the server has registered semantic tokens capabilities.
+    pub sema_tokens_registered: bool,
+    /// Whether the server has registered document formatter capabilities.
+    pub formatter_registered: bool,
+    /// Whether client is pinning a file.
+    pub pinning: bool,
+    /// The client focusing file.
+    pub focusing: Option<ImmutPath>,
+    /// The client ever focused implicitly by activities.
+    pub ever_focusing_by_activities: bool,
+    /// The client ever sent manual focusing request.
+    pub ever_manual_focusing: bool,
+
+    /* Resources */
+    /// The semantic token context.
+    pub tokens_ctx: SemanticTokenContext,
+    /// The compiler for general purpose.
+    pub primary: CompileState,
+    /// The compilers for tasks
+    pub dedicates: Vec<CompileState>,
+    /// The formatter thread running in backend.
+    /// Note: The thread will exit if you drop the sender.
+    pub format_thread: Option<crossbeam_channel::Sender<FormatRequest>>,
+    /// The user action thread running in backend.
+    /// Note: The thread will exit if you drop the sender.
+    pub user_action_thread: Option<crossbeam_channel::Sender<UserActionRequest>>,
+
+    /* Configurations */
+    /// User configuration from the editor.
+    pub config: LanguageConfig,
+    /// Const configuration initialized at the start of the session.
+    pub const_config: ConstLanguageConfig,
+    /// Font configuration from CLI args.
+    pub font_opts: CompileFontOpts,
+    /// Extra commands provided with `textDocument/executeCommand`.
+    pub exec_cmds: ExecCmdMap<CompileState>,
+}
+
+impl LanguageState {
+    pub fn new(font_opts: CompileFontOpts) -> Self {
+        Self {
+            sema_tokens_registered: false,
+            formatter_registered: false,
+            ever_focusing_by_activities: false,
+            ever_manual_focusing: false,
+            pinning: false,
+            focusing: None,
+
+            tokens_ctx: Default::default(),
+            primary: todo!(),
+            dedicates: Vec::new(),
+            format_thread: None,
+            user_action_thread: None,
+
+            config: Default::default(),
+            const_config: Default::default(),
+            font_opts,
+            exec_cmds: HashMap::from_iter([
+                ("tinymist.exportPdf", Self::export_pdf),
+                ("tinymist.exportSvg", Self::export_svg),
+                ("tinymist.exportPng", Self::export_png),
+                ("tinymist.doClearCache", Self::clear_cache),
+                ("tinymist.pinMain", Self::pin_document),
+                ("tinymist.focusMain", Self::focus_document),
+                ("tinymist.doInitTemplate", Self::init_template),
+                ("tinymist.doGetTemplateEntry", Self::do_get_template_entry),
+                ("tinymist.interactCodeContext", Self::interact_code_context),
+                ("tinymist.getDocumentTrace", Self::get_document_trace),
+                ("tinymist.getDocumentMetrics", Self::get_document_metrics),
+                ("tinymist.getServerInfo", Self::get_server_info),
+                ("tinymist.getResources", Self::get_resources),
+            ]),
+        }
+    }
+
+    /// Get the primary compiler for those commands without task context.
+    pub fn primary(&self) -> &CompileClientActor {
+        self.primary.compiler.as_ref().unwrap()
+    }
+
+    /// Change entry if needed.
+    fn update_entry(&mut self, path: &Path) -> Result<bool, TypError> {
+        if self.pinning || self.config.compile.has_default_entry_path {
+            return Ok(false);
+        }
+        // todo: race condition, we need atomic primary query
+        self.primary.do_change_entry(Some(path.into()))
+    }
+
+    /* Extra Commands */
+
+    /// Export the current document as a PDF file.
+    pub fn export_pdf(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        self.primary.export_pdf(args)
+    }
+
+    /// Export the current document as a Svg file.
+    pub fn export_svg(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        self.primary.export_svg(args)
+    }
+
+    /// Export the current document as a Png file.
+    pub fn export_png(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        self.primary.export_png(args)
+    }
+
+    /// Clear all cached resources.
+    pub fn clear_cache(&mut self, _args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        self.primary.clear_cache(Vec::new());
+        for v in &mut self.dedicates {
+            v.clear_cache(Vec::new());
+        }
+        ok(JsonValue::Null)
+    }
+
+    /// Pin main file to some path.
+    pub fn pin_document(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        let Some(entry) = parse_arg::<Option<ImmutPath>>(&args, 0) else {
+            return invalid_params("expect path at arg[0]");
+        };
+        if let Err(err) = self.pin_entry(entry.clone()) {
+            return internal_error(format!("cannot pin file: {err}"));
+        }
+        log::info!("file pinned: {entry:?}");
+        ok(JsonValue::Null)
+    }
+
+    /// Focus main file to some path.
+    pub fn focus_document(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        let Some(entry) = parse_arg::<Option<ImmutPath>>(&args, 0) else {
+            return invalid_params("expect path at arg[0]");
+        };
+        if !self.ever_manual_focusing {
+            self.ever_manual_focusing = true;
+            log::info!("first manual focusing is coming");
+        }
+        if let Err(err) = self.focus_entry(entry.clone()) {
+            return internal_error(format!("cannot focus file: {err}"));
+        }
+        log::info!("file focused: {entry:?}");
+        ok(JsonValue::Null)
+    }
+
+    /// Initialize a new template.
+    pub fn init_template(&self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        #[derive(Debug, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct InitResult {
+            entry_path: PathBuf,
+        }
+        let Some(from_source) = parse_arg::<String>(&args, 0) else {
+            return invalid_params("expect source at arg[0]");
+        };
+        let Some(to_path) = parse_arg::<Option<ImmutPath>>(&args, 1) else {
+            return invalid_params("expect path at arg[1]");
+        };
+        let fut = self.primary().steal(move |c| {
+            // Parse the package specification. If the user didn't specify the version,
+            // we try to figure it out automatically by downloading the package index
+            // or searching the disk.
+            let spec: PackageSpec = from_source
+                .parse()
+                .or_else(|err| {
+                    // Try to parse without version, but prefer the error message of the
+                    // normal package spec parsing if it fails.
+                    let spec: VersionlessPackageSpec = from_source.parse().map_err(|_| err)?;
+                    let version = determine_latest_version(c.compiler.world(), &spec)?;
+                    StrResult::Ok(spec.at(version))
+                })
+                .map_err(map_string_err("cannot parse package spec"))?;
+
+            let from_source = TemplateSource::Package(spec);
+
+            let entry_path = package::init(
+                c.compiler.world(),
+                InitTask {
+                    tmpl: from_source.clone(),
+                    dir: to_path.clone(),
+                },
+            )
+            .map_err(map_string_err("cannot initialize template"))?;
+
+            log::info!("template initialized: {from_source:?} to {to_path:?}");
+
+            ZResult::Ok(InitResult { entry_path })
+        });
+        Box::pin(async move {
+            match fut.await.and_then(|e| e) {
+                Ok(res) => to_value(res).map_err(internal_error_),
+                Err(err) => invalid_params_(format!("cannot determine template source: {err}")),
+            }
+        })
+    }
 }
 
 // todo: complete logging or implement a logging layer
@@ -378,6 +524,9 @@ impl LanguageServer for LanguageState {
     }
 
     fn execute_command(&mut self, params: ExecuteCommandParams) -> ResponseFuture<ExecuteCommand> {
-        todo!()
+        let Some(handler) = self.exec_cmds.get(&params.command) else {
+            return method_not_found(format!("unknown command: {}", params.command));
+        };
+        handler(self, params.arguments)
     }
 }

@@ -3,27 +3,24 @@
 use std::path::PathBuf;
 
 use lsp_types::TextDocumentContentChangeEvent;
-use tinymist_query::{lsp_to_typst, CompilerQueryRequest, CompilerQueryResponse, PositionEncoding};
+use tinymist_query::{lsp_to_typst, PositionEncoding};
 use typst::{diag::FileResult, syntax::Source};
 use typst_ts_compiler::vfs::notify::{FileChangeSet, MemoryEvent};
 use typst_ts_compiler::Time;
-use typst_ts_core::{error::prelude::*, Bytes, Error, ImmutPath};
+use typst_ts_core::{error::prelude::*, Bytes, Error as TypError, ImmutPath};
 
 use crate::{compiler::CompileState, LanguageState};
 
 impl CompileState {
     /// Focus main file to some path.
-    pub fn do_change_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<bool, Error> {
-        self.compiler
-            .as_mut()
-            .unwrap()
-            .change_entry(new_entry.clone())
+    pub fn do_change_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<bool, TypError> {
+        self.compiler.as_mut().unwrap().change_entry(new_entry)
     }
 }
 
 impl LanguageState {
     /// Pin the entry to the given path
-    pub fn pin_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<(), Error> {
+    pub fn pin_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<(), TypError> {
         self.pinning = new_entry.is_some();
         self.primary.do_change_entry(new_entry)?;
 
@@ -39,7 +36,7 @@ impl LanguageState {
     }
 
     /// Updates the primary (focusing) entry
-    pub fn focus_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<bool, Error> {
+    pub fn focus_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<bool, TypError> {
         if self.pinning || self.config.compile.has_default_entry_path {
             self.focusing = new_entry;
             return Ok(false);
@@ -53,7 +50,7 @@ impl LanguageState {
     ///
     /// See https://github.com/microsoft/language-server-protocol/issues/718
     ///
-    /// we do want to focus the file implicitly by `textDocument/diagnostic`
+    /// We do want to focus the file implicitly by `textDocument/diagnostic`
     /// (pullDiagnostics mode), as suggested by language-server-protocol#718,
     /// however, this has poor support, e.g. since neovim 0.10.0.
     pub fn implicit_focus_entry(
@@ -100,7 +97,7 @@ pub struct MemoryFileMeta {
 }
 
 impl LanguageState {
-    fn update_source(&self, files: FileChangeSet) -> Result<(), Error> {
+    fn update_source(&self, files: FileChangeSet) -> Result<(), TypError> {
         let primary = Some(self.primary());
         let clients_to_notify =
             (primary.into_iter()).chain(self.dedicates.iter().map(CompileState::compiler));
@@ -112,7 +109,7 @@ impl LanguageState {
         Ok(())
     }
 
-    pub fn create_source(&mut self, path: PathBuf, content: String) -> Result<(), Error> {
+    pub fn create_source(&mut self, path: PathBuf, content: String) -> Result<(), TypError> {
         let now = Time::now();
         let path: ImmutPath = path.into();
 
@@ -133,7 +130,7 @@ impl LanguageState {
         self.update_source(files)
     }
 
-    pub fn remove_source(&mut self, path: PathBuf) -> Result<(), Error> {
+    pub fn remove_source(&mut self, path: PathBuf) -> Result<(), TypError> {
         let path: ImmutPath = path.into();
 
         self.primary.memory_changes.remove(&path);
@@ -150,7 +147,7 @@ impl LanguageState {
         path: PathBuf,
         content: Vec<TextDocumentContentChangeEvent>,
         position_encoding: PositionEncoding,
-    ) -> Result<(), Error> {
+    ) -> Result<(), TypError> {
         let now = Time::now();
         let path: ImmutPath = path.into();
 
@@ -181,12 +178,5 @@ impl LanguageState {
         let files = FileChangeSet::new_inserts(vec![(path.clone(), snapshot)]);
 
         self.update_source(files)
-    }
-}
-
-impl CompileState {
-    pub fn query(&self, query: CompilerQueryRequest) -> anyhow::Result<CompilerQueryResponse> {
-        let client = self.compiler.as_ref().unwrap();
-        LanguageState::query_on(client, query)
     }
 }

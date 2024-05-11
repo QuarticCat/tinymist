@@ -22,15 +22,27 @@ fn ok<R: Request>(res: R::Result) -> ResponseFuture<R> {
 }
 
 fn internal_error<R: Request>(msg: impl Display) -> ResponseFuture<R> {
-    Box::pin(Err(ResponseError::new(ErrorCode::INTERNAL_ERROR, msg)))
+    Box::pin(internal_error_(msg))
+}
+
+fn internal_error_<R: Request>(msg: impl Display) -> ResponseResult<R> {
+    Err(ResponseError::new(ErrorCode::INTERNAL_ERROR, msg))
 }
 
 fn invalid_params<R: Request>(msg: impl Display) -> ResponseFuture<R> {
-    Box::pin(Err(ResponseError::new(ErrorCode::INVALID_PARAMS, msg)))
+    Box::pin(invalid_params_(msg))
+}
+
+fn invalid_params_<R: Request>(msg: impl Display) -> ResponseResult<R> {
+    Err(ResponseError::new(ErrorCode::INVALID_PARAMS, msg))
 }
 
 fn method_not_found<R: Request>(msg: impl Display) -> ResponseFuture<R> {
-    Box::pin(Err(ResponseError::new(ErrorCode::METHOD_NOT_FOUND, msg)))
+    Box::pin(method_not_found_(msg))
+}
+
+fn method_not_found_<R: Request>(msg: impl Display) -> ResponseResult<R> {
+    Err(ResponseError::new(ErrorCode::METHOD_NOT_FOUND, msg))
 }
 
 type ExecCmdHandler<S> = fn(&mut S, Vec<JsonValue>) -> ResponseFuture<ExecuteCommand>;
@@ -38,14 +50,14 @@ type ExecCmdMap<S> = HashMap<&'static str, ExecCmdHandler<S>>;
 
 /// Get a parsed command argument.
 /// Return `None` when no arg or parse failed.
-fn get_cmd_arg<'de, T: Deserialize<'de>>(args: &Vec<JsonValue>, idx: usize) -> Option<T> {
+fn parse_arg<'de, T: Deserialize<'de>>(args: &Vec<JsonValue>, idx: usize) -> Option<T> {
     args.get(idx).and_then(|x| from_value::<T>(x).ok())
 }
 
 /// Get a parsed command argument.
 /// Return default when no arg.
 /// Return `None` when parse failed.
-fn get_cmd_arg_<'de, T: Deserialize<'de> + Default>(
+fn parse_arg_or_default<'de, T: Deserialize<'de> + Default>(
     args: &Vec<JsonValue>,
     idx: usize,
 ) -> Option<T> {

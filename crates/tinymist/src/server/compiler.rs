@@ -27,14 +27,6 @@ struct ExportOpts {
 
 /// The object providing the language server functionality.
 pub struct CompileState {
-    /* Configurations */
-    /// User configuration from the editor.
-    pub config: CompileConfig,
-    /// Const configuration initialized at the start of the session.
-    pub const_config: ConstCompileConfig,
-    /// Extra commands provided with `textDocument/executeCommand`.
-    pub exec_cmds: ExecCmdMap<CompileState>,
-
     /* Resources */
     /// The font resolver to use.
     pub font: Deferred<SharedFontResolver>,
@@ -44,6 +36,14 @@ pub struct CompileState {
     pub editor_tx: mpsc::UnboundedSender<EditorRequest>,
     /// The compiler actor.
     pub compiler: Option<CompileClientActor>,
+
+    /* Configurations */
+    /// User configuration from the editor.
+    pub config: CompileConfig,
+    /// Const configuration initialized at the start of the session.
+    pub const_config: ConstCompileConfig,
+    /// Extra commands provided with `textDocument/executeCommand`.
+    pub exec_cmds: ExecCmdMap<CompileState>,
 }
 
 impl CompileState {
@@ -53,6 +53,11 @@ impl CompileState {
         handle: tokio::runtime::Handle,
     ) -> Self {
         Self {
+            editor_tx,
+            font,
+            compiler: None,
+            memory_changes: HashMap::new(),
+
             config: Default::default(),
             const_config: Default::default(),
             exec_cmds: HashMap::from_iter([
@@ -62,11 +67,6 @@ impl CompileState {
                 ("tinymist.doClearCache", Self::clear_cache),
                 ("tinymist.changeEntry", Self::change_entry),
             ]),
-
-            editor_tx,
-            font,
-            compiler: None,
-            memory_changes: HashMap::new(),
         }
     }
 
@@ -83,7 +83,7 @@ impl CompileState {
 
     /// Export the current document as a Svg file.
     pub fn export_svg(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(opts) = get_cmd_arg_::<ExportOpts>(&args, 1) else {
+        let Some(opts) = parse_arg_or_default::<ExportOpts>(&args, 1) else {
             return invalid_params("expect export opts at arg[1]");
         };
         self.export(ExportKind::Svg { page: opts.page }, args)
@@ -91,7 +91,7 @@ impl CompileState {
 
     /// Export the current document as a Png file.
     pub fn export_png(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(opts) = get_cmd_arg_::<ExportOpts>(&args, 1) else {
+        let Some(opts) = parse_arg_or_default::<ExportOpts>(&args, 1) else {
             return invalid_params("expect export opts at arg[1]");
         };
         self.export(ExportKind::Png { page: opts.page }, args)
@@ -104,7 +104,7 @@ impl CompileState {
         kind: ExportKind,
         args: Vec<JsonValue>,
     ) -> ResponseFuture<ExecuteCommand> {
-        let Some(path) = get_cmd_arg::<ImmutPath>(&args, 0) else {
+        let Some(path) = parse_arg::<ImmutPath>(&args, 0) else {
             return invalid_params("expect path at arg[0]");
         };
         match self.compiler().on_export(kind, path) {
@@ -114,24 +114,22 @@ impl CompileState {
     }
 
     /// Clear all cached resources.
-    ///
-    /// # Errors
-    /// Errors if the cache could not be cleared.
     pub fn clear_cache(&mut self, _args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
         comemo::evict(0);
-        ok(None)
+        self.compiler().clear_cache();
+        ok(JsonValue::Null)
     }
 
     /// Focus main file to some path.
     pub fn change_entry(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(entry) = get_cmd_arg::<Option<ImmutPath>>(&args, 0) else {
+        let Some(entry) = parse_arg::<Option<ImmutPath>>(&args, 0) else {
             return invalid_params("expect path at arg[0]");
         };
         if let Err(err) = self.do_change_entry(entry.clone()) {
-            return internal_error(format!("could not focus file: {err}"));
+            return internal_error(format!("cannot focus file: {err}"));
         };
         log::info!("entry changed: {entry:?}");
-        ok(None)
+        ok(JsonValue::Null)
     }
 }
 
