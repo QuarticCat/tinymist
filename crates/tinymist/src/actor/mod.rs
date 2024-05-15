@@ -2,7 +2,6 @@
 
 pub mod editor;
 pub mod export;
-pub mod format;
 pub mod typ_client;
 pub mod typ_server;
 pub mod user_action;
@@ -22,7 +21,6 @@ use typst_ts_core::config::compiler::EntryState;
 
 use self::{
     export::{ExportActor, ExportConfig},
-    format::run_format_thread,
     typ_client::{CompileClientActor, CompileDriver, CompileHandler},
     typ_server::CompileServerActor,
     user_action::run_user_action_thread,
@@ -30,7 +28,6 @@ use self::{
 use crate::{
     compile::CompileState,
     world::{ImmutDict, LspWorld, LspWorldBuilder},
-    TypstLanguageServer,
 };
 
 type CompileDriverInner = CompileDriverImpl<LspWorld>;

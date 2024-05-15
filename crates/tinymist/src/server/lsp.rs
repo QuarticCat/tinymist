@@ -12,10 +12,9 @@ use typst_ts_core::{Error as TypError, ImmutPath};
 
 use super::lsp_init::*;
 use super::*;
-use crate::actor::format::FormatRequest;
 use crate::actor::typ_client::CompileClientActor;
-use crate::actor::user_action::UserActionRequest;
 use crate::compile::CompileState;
+use crate::task;
 use crate::world::CompileFontOpts;
 
 // todo: parallelization
@@ -106,12 +105,6 @@ pub struct LanguageState {
     pub primary: CompileState,
     /// The compilers for tasks
     pub dedicates: Vec<CompileState>,
-    /// The formatter thread running in backend.
-    /// Note: The thread will exit if you drop the sender.
-    pub format_thread: Option<crossbeam_channel::Sender<FormatRequest>>,
-    /// The user action thread running in backend.
-    /// Note: The thread will exit if you drop the sender.
-    pub user_action_thread: Option<crossbeam_channel::Sender<UserActionRequest>>,
 }
 
 impl LanguageState {
@@ -134,8 +127,6 @@ impl LanguageState {
             tokens_ctx: Default::default(),
             primary: todo!(),
             dedicates: Vec::new(),
-            format_thread: None,
-            user_action_thread: None,
         }
     }
 
@@ -273,11 +264,19 @@ impl LanguageServer for LanguageState {
     }
 
     fn formatting(&mut self, params: DocumentFormattingParams) -> ResponseFuture<Formatting> {
-        // todo: remove format thread
         if self.config.formatter == FormatterMode::Disable {
             return ok(None);
         }
-        todo!()
+        let path = url_to_path(params.text_document.uri);
+        let Some(mem_file) = self.primary.memory_changes.get(&path) else {
+            return internal_error(format!("file missing: {path:?}"));
+        };
+        Box::pin(tokio::spawn(task::format(
+            mem_file.content.clone(),
+            self.config.formatter,
+            self.config.formatter_print_width,
+            self.const_config.position_encoding,
+        )))
     }
 
     /* Latency Insensitive Requests */

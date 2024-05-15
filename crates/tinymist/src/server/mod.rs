@@ -15,34 +15,34 @@ use lsp_types::request::{ExecuteCommand, Request};
 use serde::Deserialize;
 use serde_json::{from_value, Value as JsonValue};
 
-type ResponseResult<R> = Result<<R as Request>::Result, ResponseError>;
-type ResponseFuture<R> = BoxFuture<'static, ResponseResult<R>>;
+pub type ResponseResult<R> = Result<<R as Request>::Result, ResponseError>;
+pub type ResponseFuture<R> = BoxFuture<'static, ResponseResult<R>>;
 
-fn ok<R: Request>(res: R::Result) -> ResponseFuture<R> {
+pub fn ok<R: Request>(res: R::Result) -> ResponseFuture<R> {
     Box::pin(ready(Ok(res)))
 }
 
-fn internal_error<R: Request>(msg: impl Display) -> ResponseFuture<R> {
+pub fn internal_error<R: Request>(msg: impl Display) -> ResponseFuture<R> {
     Box::pin(internal_error_(msg))
 }
 
-fn internal_error_<R: Request>(msg: impl Display) -> ResponseResult<R> {
+pub fn internal_error_<R: Request>(msg: impl Display) -> ResponseResult<R> {
     Err(ResponseError::new(ErrorCode::INTERNAL_ERROR, msg))
 }
 
-fn invalid_params<R: Request>(msg: impl Display) -> ResponseFuture<R> {
+pub fn invalid_params<R: Request>(msg: impl Display) -> ResponseFuture<R> {
     Box::pin(invalid_params_(msg))
 }
 
-fn invalid_params_<R: Request>(msg: impl Display) -> ResponseResult<R> {
+pub fn invalid_params_<R: Request>(msg: impl Display) -> ResponseResult<R> {
     Err(ResponseError::new(ErrorCode::INVALID_PARAMS, msg))
 }
 
-fn method_not_found<R: Request>(msg: impl Display) -> ResponseFuture<R> {
+pub fn method_not_found<R: Request>(msg: impl Display) -> ResponseFuture<R> {
     Box::pin(method_not_found_(msg))
 }
 
-fn method_not_found_<R: Request>(msg: impl Display) -> ResponseResult<R> {
+pub fn method_not_found_<R: Request>(msg: impl Display) -> ResponseResult<R> {
     Err(ResponseError::new(ErrorCode::METHOD_NOT_FOUND, msg))
 }
 

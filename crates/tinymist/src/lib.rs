@@ -26,16 +26,17 @@
 //! tinymist lsp --replay input.txt
 //! ```
 
-// pub mod formatting;
 mod actor;
 mod layer;
 mod resource;
 mod server;
 mod state;
+mod task;
 mod tools;
 pub mod transport;
 mod utils;
 mod world;
+
 pub use server::compile;
 pub use server::compile_init;
 pub use server::lsp::*;

@@ -214,7 +214,7 @@ impl From<&InitializeParams> for ConstLanguageConfig {
 
 // todo: not yet fully migrated
 impl LanguageState {
-    pub(crate) fn init(&mut self, params: InitializeParams) -> ResponseResult<Initialize> {
+    pub fn init(&mut self, params: InitializeParams) -> ResponseResult<Initialize> {
         // Initialize configurations.
         let cc = ConstLanguageConfig::from(&params);
         log::info!("initialized with const_config {cc:?}");

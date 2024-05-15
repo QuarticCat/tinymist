@@ -538,7 +538,7 @@ where
         line: usize,
         character: usize,
     ) -> ZResult<Option<Position>> {
-        self.steal_async(move |this| {
+        self.steal(move |this| {
             let doc = this.document()?;
 
             let world = this.compiler.world();
@@ -562,7 +562,7 @@ where
         &self,
         loc: SourceLocation,
     ) -> ZResult<Option<SourceSpanOffset>> {
-        self.steal_async(move |this| {
+        self.steal(move |this| {
             let world = this.compiler.world();
 
             let filepath = Path::new(&loc.filepath);
@@ -599,7 +599,7 @@ where
         let resolve_off =
             |src: &Source, off: usize| src.byte_to_line(off).zip(src.byte_to_column(off));
 
-        self.steal_async(move |this| {
+        self.steal(move |this| {
             let world = this.compiler.world();
             let src_id = span.id()?;
             let source = world.source(src_id).ok()?;
