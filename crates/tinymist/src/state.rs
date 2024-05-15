@@ -9,7 +9,7 @@ use typst_ts_compiler::vfs::notify::{FileChangeSet, MemoryEvent};
 use typst_ts_compiler::Time;
 use typst_ts_core::{error::prelude::*, Bytes, Error as TypError, ImmutPath};
 
-use crate::{compiler::CompileState, LanguageState};
+use crate::{compile::CompileState, LanguageState};
 
 impl CompileState {
     /// Focus main file to some path.

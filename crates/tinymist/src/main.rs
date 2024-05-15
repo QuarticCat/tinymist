@@ -17,7 +17,7 @@ use typst_ts_core::{typst::prelude::EcoVec, TypstDict};
 
 use crate::args::{CliArguments, Commands, CompileArgs, LspArgs};
 use tinymist::{
-    compiler_init::{CompileInit, CompileInitializeParams},
+    compile_init::{CompileInit, CompileInitializeParams},
     harness::{lsp_harness, InitializedLspDriver, LspDriver, LspHost},
     transport::with_stdio_transport,
     CompileFontOpts, Init, LspWorld, TypstLanguageServer,

@@ -1,8 +1,9 @@
+pub mod compile;
+pub mod compile_cmd;
+pub mod compile_init;
 pub mod lsp;
+pub mod lsp_cmd;
 pub mod lsp_init;
-
-pub mod compiler;
-pub mod compiler_init;
 
 use std::collections::HashMap;
 use std::fmt::Display;

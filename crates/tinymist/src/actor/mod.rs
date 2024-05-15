@@ -28,7 +28,7 @@ use self::{
     user_action::run_user_action_thread,
 };
 use crate::{
-    compiler::CompileState,
+    compile::CompileState,
     world::{ImmutDict, LspWorld, LspWorldBuilder},
     TypstLanguageServer,
 };

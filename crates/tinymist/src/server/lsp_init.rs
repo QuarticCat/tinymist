@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use typst::util::Deferred;
 use typst_ts_core::ImmutPath;
 
-use super::compiler_init::*;
+use super::compile_init::*;
 use super::lsp::*;
 use super::*;
 use crate::actor::editor::EditorActor;

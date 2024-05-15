@@ -67,7 +67,7 @@ use super::{
 use crate::{
     actor::export::ExportRequest,
     actor::typ_server::EntryStateExt,
-    compiler_init::CompileConfig,
+    compile_init::CompileConfig,
     tools::preview::{CompilationHandle, CompileStatus},
     utils,
     world::LspWorld,
