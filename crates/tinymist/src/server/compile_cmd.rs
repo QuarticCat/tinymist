@@ -30,7 +30,7 @@ impl CompileState {
     /// Export the current document as a Svg file.
     pub fn export_svg(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
         let Some(opts) = parse_arg_or_default::<ExportOpts>(&args, 1) else {
-            return invalid_params("expect export opts at arg[1]");
+            return invalid_params("expect export opts at args[1]");
         };
         self.export(ExportKind::Svg { page: opts.page }, args)
     }
@@ -38,7 +38,7 @@ impl CompileState {
     /// Export the current document as a Png file.
     pub fn export_png(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
         let Some(opts) = parse_arg_or_default::<ExportOpts>(&args, 1) else {
-            return invalid_params("expect export opts at arg[1]");
+            return invalid_params("expect export opts at args[1]");
         };
         self.export(ExportKind::Png { page: opts.page }, args)
     }
@@ -51,7 +51,7 @@ impl CompileState {
         args: Vec<JsonValue>,
     ) -> ResponseFuture<ExecuteCommand> {
         let Some(path) = parse_arg::<ImmutPath>(&args, 0) else {
-            return invalid_params("expect path at arg[0]");
+            return invalid_params("expect path at args[0]");
         };
         match self.compiler().on_export(kind, path) {
             Ok(res) => ok(to_value(res).unwrap()),
@@ -69,7 +69,7 @@ impl CompileState {
     /// Focus main file to some path.
     pub fn change_entry(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
         let Some(entry) = parse_arg::<Option<ImmutPath>>(&args, 0) else {
-            return invalid_params("expect path at arg[0]");
+            return invalid_params("expect path at args[0]");
         };
         if let Err(err) = self.do_change_entry(entry.clone()) {
             return internal_error(format!("cannot focus file: {err}"));

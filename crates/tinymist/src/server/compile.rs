@@ -22,6 +22,8 @@ pub struct CompileState {
     pub config: CompileConfig,
     /// Const configuration initialized at the start of the session.
     pub const_config: ConstCompileConfig,
+
+    /* Command maps */
     /// Extra commands provided with `textDocument/executeCommand`.
     pub exec_cmds: ExecCmdMap<Self>,
 
@@ -45,6 +47,7 @@ impl CompileState {
         Self {
             config: Default::default(),
             const_config: Default::default(),
+            
             exec_cmds: Self::get_exec_cmds(),
 
             editor_tx,

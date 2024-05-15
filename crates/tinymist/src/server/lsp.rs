@@ -30,6 +30,7 @@ macro_rules! query_source {
         ok($req.request(&source, $self.const_config.position_encoding))
     }};
 }
+pub(super) use query_source;
 
 // todo: parallelization (snapshot self.tokens_ctx)
 // todo: create a trait for these requests and make it a function
@@ -42,6 +43,7 @@ macro_rules! query_tokens_cache {
         ok($req.request(&$self.tokens_ctx, source))
     }};
 }
+pub(super) use query_tokens_cache;
 
 // todo: create a trait for these requests and make it a function
 macro_rules! query_state {
@@ -49,12 +51,11 @@ macro_rules! query_state {
         if let Err(err) = $self.update_entry(&$req.path) {
             return internal_error(format!("cannot update entry: {err:?}"));
         }
-        let fut = $self
-            .primary()
-            .steal_state(move |w, doc| $req.request(w, doc));
+        let fut = $self.primary().steal_state(move |w, d| $req.request(w, d));
         Box::pin(async move { fut.await.or_else(internal_error) })
     }};
 }
+pub(super) use query_state;
 
 // todo: create a trait for these requests and make it a function
 macro_rules! query_world {
@@ -66,6 +67,7 @@ macro_rules! query_world {
         Box::pin(async move { fut.await.or_else(internal_error) })
     }};
 }
+pub(super) use query_world;
 
 /// The object providing the language server functionality.
 pub struct LanguageState {
@@ -90,8 +92,12 @@ pub struct LanguageState {
     pub const_config: ConstLanguageConfig,
     /// Font configuration from CLI args.
     pub font_opts: CompileFontOpts,
+
+    /* Command maps */
     /// Extra commands provided with `textDocument/executeCommand`.
     pub exec_cmds: ExecCmdMap<Self>,
+    /// Regular commands for dispatching.
+    pub resource_routes: ExecCmdMap<Self>,
 
     /* Resources */
     /// The semantic token context.
@@ -121,7 +127,9 @@ impl LanguageState {
             config: Default::default(),
             const_config: Default::default(),
             font_opts,
+
             exec_cmds: Self::get_exec_cmds(),
+            resource_routes: Self::get_resource_routes(),
 
             tokens_ctx: Default::default(),
             primary: todo!(),
@@ -137,7 +145,7 @@ impl LanguageState {
     }
 
     /// Change entry if needed.
-    fn update_entry(&mut self, path: &Path) -> Result<bool, TypError> {
+    pub fn update_entry(&mut self, path: &Path) -> Result<bool, TypError> {
         if self.pinning || self.config.compile.has_default_entry_path {
             return Ok(false);
         }
@@ -145,8 +153,6 @@ impl LanguageState {
         self.primary.do_change_entry(Some(path.into()))
     }
 }
-
-// todo: complete logging or implement a logging layer
 
 impl LanguageServer for LanguageState {
     type Error = ResponseError;
