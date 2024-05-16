@@ -7,7 +7,6 @@ use std::{
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::Arc,
-    thread::JoinHandle,
 };
 
 use serde::Serialize;
@@ -34,8 +33,6 @@ use typst_ts_core::{
     error::prelude::{map_string_err, ZResult},
     TypstDocument, TypstFileId,
 };
-
-use crate::utils;
 
 pub trait EntryStateExt {
     fn is_inactive(&self) -> bool;
@@ -69,12 +66,6 @@ enum Interrupt<Ctx> {
 ///
 /// The internal function will be dereferenced and called on the context.
 pub type BorrowTask<Ctx> = Box<dyn FnOnce(&mut Ctx) + Send + 'static>;
-
-/// Responses from the compiler thread.
-enum CompilerResponse {
-    /// Response to the file watcher
-    Notify(NotifyMessage),
-}
 
 /// A tagged memory event with logical tick.
 struct TaggedMemoryEvent {
@@ -177,60 +168,21 @@ where
         CompileEnv::default().configure_shared(feature_set)
     }
 
-    /// Run the compiler thread synchronously.
-    pub fn run(self) -> bool {
-        use tokio::runtime::Handle;
-
-        if Handle::try_current().is_err() && self.enable_watch {
-            log::error!("Typst compiler thread with watch enabled must be run in a tokio runtime");
-            return false;
-        }
-
-        tokio::task::block_in_place(move || Handle::current().block_on(self.block_run_inner()))
-    }
-
-    /// Inner function for `run`, it launches the compiler thread and blocks
-    /// until it exits.
-    async fn block_run_inner(mut self) -> bool {
-        if !self.enable_watch {
-            let mut env = self.make_env(self.once_feature_set.clone());
-            let compiled = self.compiler.compile(&mut env);
-            return compiled.is_ok();
-        }
-
-        if let Some(h) = self.spawn().await {
-            // Note: this is blocking the current thread.
-            // Note: the block safety is ensured by `run` function.
-            h.join().unwrap();
-        }
-
-        true
-    }
-
-    /// Spawn the compiler thread.
-    pub async fn spawn(mut self) -> Option<JoinHandle<()>> {
+    /// Run the compiler future.
+    pub async fn run(mut self) {
         if !self.enable_watch {
             let mut env = self.make_env(self.once_feature_set.clone());
             self.compiler.compile(&mut env).ok();
-            return None;
+            return;
         }
 
         // Setup internal channel.
         let (dep_tx, dep_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        let settle_notify_tx = dep_tx.clone();
-        let settle_notify = move || {
-            log_send_error(
-                "settle_notify",
-                settle_notify_tx.send(NotifyMessage::Settle),
-            )
-        };
-
         // Wrap sender to send compiler response.
-        let compiler_ack = move |res: CompilerResponse| match res {
-            CompilerResponse::Notify(msg) => {
-                log_send_error("compile_deps", dep_tx.send(msg));
-            }
+        let dep_tx_cloned = dep_tx.clone();
+        let compiler_ack = move |msg: NotifyMessage| {
+            log_send_error("compile_deps", dep_tx_cloned.send(msg));
         };
 
         // Spawn file system watcher.
@@ -240,52 +192,45 @@ where
             log_send_error("fs_event", fs_tx.send(Interrupt::Fs(event)));
         }));
 
-        // Spawn compiler thread.
-        let thread_builder = std::thread::Builder::new().name("typst-compiler".to_owned());
-        let compile_thread = thread_builder.spawn(move || {
-            log::debug!("CompileServerActor: initialized");
+        log::debug!("CompileServerActor: initialized");
 
-            // Wait for first events.
-            'event_loop: while let Some(mut event) = self.steal_rx.blocking_recv() {
-                let mut need_compile = false;
+        // Wait for first events.
+        'event_loop: while let Some(mut event) = self.steal_rx.recv().await {
+            let mut need_compile = false;
 
-                'accumulate: loop {
-                    // Warp the logical clock by one.
-                    self.logical_tick += 1;
+            'accumulate: loop {
+                // Warp the logical clock by one.
+                self.logical_tick += 1;
 
-                    // If settle, stop the actor.
-                    if let Interrupt::Settle(e) = event {
-                        log::info!("CompileServerActor: requested stop");
-                        e.send(()).ok();
-                        break 'event_loop;
-                    }
-
-                    // Ensure complied before executing tasks.
-                    if matches!(event, Interrupt::Task(_)) && need_compile {
-                        self.compile(&compiler_ack);
-                        need_compile = false;
-                    }
-
-                    need_compile |= self.process(event, &compiler_ack);
-
-                    // Try to accumulate more events.
-                    match self.steal_rx.try_recv() {
-                        Ok(new_event) => event = new_event,
-                        _ => break 'accumulate,
-                    }
+                // If settle, stop the actor.
+                if let Interrupt::Settle(e) = event {
+                    log::info!("CompileServerActor: requested stop");
+                    e.send(()).ok();
+                    break 'event_loop;
                 }
 
-                if need_compile {
+                // Ensure complied before executing tasks.
+                if matches!(event, Interrupt::Task(_)) && need_compile {
                     self.compile(&compiler_ack);
+                    need_compile = false;
+                }
+
+                need_compile |= self.process(event, &compiler_ack);
+
+                // Try to accumulate more events.
+                match self.steal_rx.try_recv() {
+                    Ok(new_event) => event = new_event,
+                    _ => break 'accumulate,
                 }
             }
 
-            settle_notify();
-            log::info!("CompileServerActor: exited");
-        });
+            if need_compile {
+                self.compile(&compiler_ack);
+            }
+        }
 
-        // Return the thread handle.
-        Some(compile_thread.unwrap())
+        log_send_error("settle_notify", dep_tx.send(NotifyMessage::Settle));
+        log::info!("CompileServerActor: exited");
     }
 
     pub(crate) fn change_entry(&mut self, entry: EntryState) {
@@ -300,9 +245,7 @@ where
     }
 
     /// Compile the document.
-    fn compile(&mut self, send: impl Fn(CompilerResponse)) {
-        use CompilerResponse::*;
-
+    fn compile(&mut self, send: impl Fn(NotifyMessage)) {
         if self.suspend_state.suspended {
             self.suspend_state.dirty = true;
             return;
@@ -325,13 +268,11 @@ where
         let mut deps = vec![];
         self.compiler
             .iter_dependencies(&mut |dep, _| deps.push(dep.clone()));
-        send(Notify(NotifyMessage::SyncDependency(deps)));
+        send(NotifyMessage::SyncDependency(deps));
     }
 
     /// Process some interrupt. Return whether it needs compilation.
-    fn process(&mut self, event: Interrupt<Self>, send: impl Fn(CompilerResponse)) -> bool {
-        use CompilerResponse::*;
-
+    fn process(&mut self, event: Interrupt<Self>, send: impl Fn(NotifyMessage)) -> bool {
         match event {
             Interrupt::Compile => true,
             Interrupt::Task(task) => {
@@ -367,7 +308,7 @@ where
                 // Otherwise, send upstream update event.
                 // Also, record the logical tick when shadow is dirty.
                 self.dirty_shadow_logical_tick = self.logical_tick;
-                send(Notify(NotifyMessage::UpstreamUpdate(
+                send(NotifyMessage::UpstreamUpdate(
                     typst_ts_compiler::vfs::notify::UpstreamUpdateEvent {
                         invalidates: files.into_iter().collect(),
                         opaque: Box::new(TaggedMemoryEvent {
@@ -375,7 +316,7 @@ where
                             event,
                         }),
                     },
-                )));
+                ));
 
                 false
             }
@@ -474,10 +415,11 @@ impl<Ctx> CompileClient<Ctx> {
         Self { intr_tx }
     }
 
-    fn steal_inner<Ret: Send + 'static>(
+    /// Steal the compiler thread and run the given function.
+    pub async fn steal<Ret: Send + 'static>(
         &self,
         f: impl FnOnce(&mut Ctx) -> Ret + Send + 'static,
-    ) -> ZResult<oneshot::Receiver<Ret>> {
+    ) -> ZResult<Ret> {
         let (tx, rx) = oneshot::channel();
 
         let task = Box::new(move |this: &mut Ctx| {
@@ -491,25 +433,17 @@ impl<Ctx> CompileClient<Ctx> {
         self.intr_tx
             .send(Interrupt::Task(task))
             .map_err(map_string_err("failed to send steal request"))?;
-        Ok(rx)
+
+        rx.await.map_err(map_string_err("failed to call steal"))
     }
 
-    /// Steal the compiler thread and run the given function.
-    pub async fn steal<Ret: Send + 'static>(
-        &self,
-        f: impl FnOnce(&mut Ctx) -> Ret + Send + 'static,
-    ) -> ZResult<Ret> {
-        self.steal_inner(f)?
-            .await
-            .map_err(map_string_err("failed to call steal"))
-    }
-
-    pub fn settle(&self) -> ZResult<()> {
+    pub async fn settle(&self) -> ZResult<()> {
         let (tx, rx) = oneshot::channel();
         self.intr_tx
             .send(Interrupt::Settle(tx))
             .map_err(map_string_err("failed to send settle request"))?;
-        utils::threaded_receive(rx)
+        rx.await
+            .map_err(map_string_err("failed to receive settle request"))
     }
 
     pub fn add_memory_changes(&self, event: MemoryEvent) {

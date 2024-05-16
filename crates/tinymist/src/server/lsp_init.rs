@@ -15,7 +15,6 @@ use super::compile_init::*;
 use super::lsp::*;
 use super::*;
 use crate::actor::editor::EditorActor;
-use crate::utils::{try_, try_or};
 use crate::world::{ImmutDict, SharedFontResolver};
 
 // todo: svelte-language-server responds to a Goto Definition request with

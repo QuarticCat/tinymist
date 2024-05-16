@@ -42,7 +42,7 @@ impl CompileState {
         let (export_tx, export_rx) = mpsc::unbounded_channel();
 
         // Run Export actors before preparing cluster to avoid loss of events
-        self.handle.spawn(
+        tokio::spawn(
             ExportActor::new(
                 editor_group.clone(),
                 doc_rx,
@@ -61,7 +61,6 @@ impl CompileState {
 
         // Create the server
         let inner = Deferred::new({
-            let current_runtime = self.handle.clone();
             let handler = CompileHandler {
                 #[cfg(feature = "preview")]
                 inner: std::sync::Arc::new(parking_lot::Mutex::new(None)),
@@ -71,7 +70,7 @@ impl CompileState {
                 editor_tx: self.editor_tx.clone(),
             };
 
-            let position_encoding = self.const_config().position_encoding;
+            let position_encoding = self.const_config.position_encoding;
             let enable_periscope = self.config.periscope_args.is_some();
             let periscope_args = self.config.periscope_args.clone();
             let diag_group = editor_group.clone();
@@ -108,7 +107,7 @@ impl CompileState {
                 // must update them.
                 client.add_memory_changes(MemoryEvent::Update(snapshot));
 
-                current_runtime.spawn(server.spawn());
+                tokio::spawn(server.run());
 
                 client
             }

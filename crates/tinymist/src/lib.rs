@@ -34,7 +34,6 @@ mod server;
 mod state;
 mod task;
 mod tools;
-mod utils;
 mod world;
 
 pub use server::compile;

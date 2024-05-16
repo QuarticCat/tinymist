@@ -15,6 +15,18 @@ use lsp_types::request::{ExecuteCommand, Request};
 use serde::Deserialize;
 use serde_json::{from_value, Value as JsonValue};
 
+fn try_<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
+    f()
+}
+
+fn try_or<T>(f: impl FnOnce() -> Option<T>, default: T) -> T {
+    f().unwrap_or(default)
+}
+
+fn try_or_default<T: Default>(f: impl FnOnce() -> Option<T>) -> T {
+    f().unwrap_or_default()
+}
+
 pub type ResponseResult<R> = Result<<R as Request>::Result, ResponseError>;
 pub type ResponseFuture<R> = BoxFuture<'static, ResponseResult<R>>;
 

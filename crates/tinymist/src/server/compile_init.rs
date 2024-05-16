@@ -17,10 +17,10 @@ use typst::util::Deferred;
 use typst_ts_core::config::compiler::EntryState;
 use typst_ts_core::{ImmutPath, TypstDict};
 
+use super::*;
 use crate::actor::editor::EditorRequest;
 use crate::compile::CompileState;
 use crate::harness::LspDriver;
-use crate::utils::{try_, try_or_default};
 use crate::world::{ImmutDict, SharedFontResolver};
 use crate::{CompileExtraOpts, CompileFontOpts, ExportMode, LspHost};
 

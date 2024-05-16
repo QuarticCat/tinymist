@@ -68,7 +68,6 @@ use crate::{
     actor::typ_server::EntryStateExt,
     compile_init::CompileConfig,
     tools::preview::{CompilationHandle, CompileStatus},
-    utils,
     world::LspWorld,
 };
 
@@ -303,20 +302,40 @@ impl CompileClientActor {
         self.inner().steal(f).await
     }
 
-    pub fn settle(&mut self) {
-        let _ = self.change_entry(None);
+    pub async fn steal_state<T: Send + Sync + 'static>(
+        &self,
+        f: impl FnOnce(&mut AnalysisContext, Option<VersionedDocument>) -> T + Send + Sync + 'static,
+    ) -> anyhow::Result<T> {
+        self.steal(move |compiler| {
+            let doc = compiler.success_doc();
+            let c = &mut compiler.compiler.compiler;
+            c.run_analysis(move |ctx| f(ctx, doc))
+        })
+        .await?
+    }
+
+    pub async fn steal_world<T: Send + Sync + 'static>(
+        &self,
+        f: impl FnOnce(&mut AnalysisContext) -> T + Send + Sync + 'static,
+    ) -> anyhow::Result<T> {
+        self.steal(move |compiler| compiler.compiler.compiler.run_analysis(f))
+            .await?
+    }
+
+    pub async fn settle(&mut self) {
+        let _ = self.change_entry(None).await;
         log::info!("TypstActor({}): settle requested", self.diag_group);
-        match self.inner().settle() {
+        match self.inner().settle().await {
             Ok(()) => log::info!("TypstActor({}): settled", self.diag_group),
             Err(err) => log::error!("TypstActor({}): failed to settle: {err:#}", self.diag_group),
         }
     }
 
-    pub fn sync_config(&mut self, config: CompileConfig) {
+    pub fn change_config(&mut self, config: CompileConfig) {
         self.config = config;
     }
 
-    pub fn change_entry(&mut self, path: Option<ImmutPath>) -> Result<bool, Error> {
+    pub async fn change_entry(&mut self, path: Option<ImmutPath>) -> Result<bool, Error> {
         if path
             .as_deref()
             .is_some_and(|p| !p.is_absolute() && !p.starts_with("/untitled"))
@@ -347,7 +366,8 @@ impl CompileClientActor {
 
             res.map(|_| ())
                 .map_err(|err| error_once!("failed to change entry", err: format!("{err:?}")))
-        })??;
+        })
+        .await??;
 
         let entry = next_entry.clone();
         let req = ExportRequest::ChangeExportPath(entry);
@@ -363,7 +383,7 @@ impl CompileClientActor {
     }
 
     pub fn add_memory_changes(&self, event: MemoryEvent) {
-        self.inner.wait().add_memory_changes(event);
+        self.inner().add_memory_changes(event);
     }
 
     pub(crate) fn change_export_pdf(&mut self, config: ExportConfig) {
@@ -376,13 +396,15 @@ impl CompileClientActor {
             }));
     }
 
-    pub fn clear_cache(&self) {
-        let _ = self.steal(|c| {
-            c.compiler.compiler.analysis.caches = Default::default();
-        });
+    pub async fn clear_cache(&self) {
+        let _ = self
+            .steal(|c| {
+                c.compiler.compiler.analysis.caches = Default::default();
+            })
+            .await;
     }
 
-    pub fn collect_server_info(&self) -> anyhow::Result<HashMap<String, ServerInfoResponse>> {
+    pub async fn collect_server_info(&self) -> anyhow::Result<HashMap<String, ServerInfoResponse>> {
         let dg = self.diag_group.clone();
         self.steal(move |c| {
             let cc = &c.compiler.compiler;
@@ -399,45 +421,28 @@ impl CompileClientActor {
 
             HashMap::from_iter([(dg, info)])
         })
+        .await
         .map_err(|e| e.into())
     }
 
-    pub fn on_export(&self, kind: ExportKind, path: PathBuf) -> anyhow::Result<Option<PathBuf>> {
+    pub async fn on_export(
+        &self,
+        kind: ExportKind,
+        path: PathBuf,
+    ) -> anyhow::Result<Option<PathBuf>> {
         // todo: we currently doesn't respect the path argument...
         log::info!("CompileActor: on export: {}", path.display());
 
         let (tx, rx) = oneshot::channel();
         let _ = self.export_tx.send(ExportRequest::Oneshot(Some(kind), tx));
-        let res: Option<PathBuf> = utils::threaded_receive(rx)?;
+        let res: Option<PathBuf> = rx.await?;
 
         log::info!("CompileActor: on export end: {path:?} as {res:?}");
         Ok(res)
     }
 
-    pub fn on_save_export(&self, path: PathBuf) -> anyhow::Result<()> {
+    pub fn on_save_export(&self, path: PathBuf) {
         log::info!("CompileActor: on save export: {}", path.display());
         let _ = self.export_tx.send(ExportRequest::OnSaved(path));
-
-        Ok(())
-    }
-
-    pub async fn steal_state<T: Send + Sync + 'static>(
-        &self,
-        f: impl FnOnce(&mut AnalysisContext, Option<VersionedDocument>) -> T + Send + Sync + 'static,
-    ) -> anyhow::Result<T> {
-        self.steal(move |compiler| {
-            let doc = compiler.success_doc();
-            let c = &mut compiler.compiler.compiler;
-            c.run_analysis(move |ctx| f(ctx, doc))
-        })
-        .await?
-    }
-
-    pub async fn steal_world<T: Send + Sync + 'static>(
-        &self,
-        f: impl FnOnce(&mut AnalysisContext) -> T + Send + Sync + 'static,
-    ) -> anyhow::Result<T> {
-        self.steal(move |compiler| compiler.compiler.compiler.run_analysis(f))
-            .await?
     }
 }
