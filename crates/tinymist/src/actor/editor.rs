@@ -7,7 +7,7 @@ use lsp_types::{Diagnostic, Url};
 use tinymist_query::{DiagnosticsMap, LspDiagnostic};
 use tokio::sync::mpsc;
 
-use crate::{tools::word_count::WordsCount, LspHost, TypstLanguageServer};
+use crate::tools::word_count::WordsCount;
 
 pub enum EditorRequest {
     Diag(String, Option<DiagnosticsMap>),
@@ -47,10 +47,8 @@ impl EditorActor {
         while let Some(req) = self.editor_rx.recv().await {
             match req {
                 EditorRequest::Diag(group, diagnostics) => {
-                    info!(
-                        "received diagnostics from {group}: diag({:?})",
-                        diagnostics.as_ref().map(|e| e.len())
-                    );
+                    let diag = diagnostics.as_ref().map(|e| e.len());
+                    info!("received diagnostics from {group}: diag({diag:?})");
 
                     let with_primary = self.affect_map.len() == 1
                         && self.affect_map.contains_key("primary")

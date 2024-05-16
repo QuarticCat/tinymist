@@ -33,7 +33,6 @@ use std::{
 };
 
 use anyhow::{anyhow, bail};
-use log::{error, info, trace};
 use parking_lot::Mutex;
 use tinymist_query::{
     analysis::{Analysis, AnalysisContext, AnalysisResources},
@@ -77,8 +76,6 @@ type CompileDriverInner = CompileDriverImpl<LspWorld>;
 type CompileService = CompileServerActor<CompileDriver>;
 type CompileClient = TsCompileClient<CompileService>;
 
-type EditorSender = mpsc::UnboundedSender<EditorRequest>;
-
 pub struct CompileHandler {
     pub(super) diag_group: String,
 
@@ -87,7 +84,7 @@ pub struct CompileHandler {
 
     pub(super) doc_tx: watch::Sender<Option<Arc<TypstDocument>>>,
     pub(super) export_tx: mpsc::UnboundedSender<ExportRequest>,
-    pub(super) editor_tx: EditorSender,
+    pub(super) editor_tx: mpsc::UnboundedSender<EditorRequest>,
 }
 
 impl CompilationHandle for CompileHandler {
@@ -128,7 +125,7 @@ impl CompileHandler {
             .editor_tx
             .send(EditorRequest::Diag(self.diag_group.clone(), diagnostics));
         if let Err(err) = res {
-            error!("failed to send diagnostics: {err:#}");
+            log::error!("failed to send diagnostics: {err:#}");
         }
     }
 }
@@ -185,7 +182,7 @@ impl CompileDriver {
         errors: EcoVec<SourceDiagnostic>,
         warnings: Option<EcoVec<SourceDiagnostic>>,
     ) {
-        trace!("notify diagnostics: {errors:#?} {warnings:#?}");
+        log::trace!("notify diagnostics: {errors:#?} {warnings:#?}");
 
         let diagnostics = self.run_analysis(|ctx| {
             tinymist_query::convert_diagnostics(ctx, errors.iter().chain(warnings.iter().flatten()))
@@ -200,7 +197,7 @@ impl CompileDriver {
                 self.handler.push_diagnostics(valid.then_some(diagnostics));
             }
             Err(err) => {
-                error!("TypstActor: failed to convert diagnostics: {:#}", err);
+                log::error!("TypstActor: failed to convert diagnostics: {:#}", err);
                 self.handler.push_diagnostics(None);
             }
         }
@@ -213,19 +210,19 @@ impl CompileDriver {
         let w = self.inner.world_mut();
 
         let Some(main) = w.main_id() else {
-            error!("TypstActor: main file is not set");
+            log::error!("TypstActor: main file is not set");
             bail!("main file is not set");
         };
         let Some(root) = w.entry.root() else {
-            error!("TypstActor: root is not set");
+            log::error!("TypstActor: root is not set");
             bail!("root is not set");
         };
         w.source(main).map_err(|err| {
-            info!("TypstActor: failed to prepare main file: {err:?}");
+            log::info!("TypstActor: failed to prepare main file: {err:?}");
             anyhow!("failed to get source: {err}")
         })?;
         w.prepare_env(&mut Default::default()).map_err(|err| {
-            error!("TypstActor: failed to prepare env: {err:?}");
+            log::error!("TypstActor: failed to prepare env: {err:?}");
             anyhow!("failed to prepare env")
         })?;
 
@@ -308,10 +305,10 @@ impl CompileClientActor {
 
     pub fn settle(&mut self) {
         let _ = self.change_entry(None);
-        info!("TypstActor({}): settle requested", self.diag_group);
+        log::info!("TypstActor({}): settle requested", self.diag_group);
         match self.inner().settle() {
-            Ok(()) => info!("TypstActor({}): settled", self.diag_group),
-            Err(err) => error!("TypstActor({}): failed to settle: {err:#}", self.diag_group),
+            Ok(()) => log::info!("TypstActor({}): settled", self.diag_group),
+            Err(err) => log::error!("TypstActor({}): failed to settle: {err:#}", self.diag_group),
         }
     }
 
@@ -333,7 +330,7 @@ impl CompileClientActor {
         }
 
         let diag_group = &self.diag_group;
-        info!("the entry file of TypstActor({diag_group}) is changing to {next_entry:?}");
+        log::info!("the entry file of TypstActor({diag_group}) is changing to {next_entry:?}");
 
         // todo
         let next = next_entry.clone();
@@ -344,7 +341,7 @@ impl CompileClientActor {
             let res = compiler.compiler.world_mut().mutate_entry(next);
 
             if next_is_inactive {
-                info!("TypstActor: removing diag");
+                log::info!("TypstActor: removing diag");
                 compiler.compiler.compiler.handler.push_diagnostics(None);
             }
 
@@ -407,18 +404,18 @@ impl CompileClientActor {
 
     pub fn on_export(&self, kind: ExportKind, path: PathBuf) -> anyhow::Result<Option<PathBuf>> {
         // todo: we currently doesn't respect the path argument...
-        info!("CompileActor: on export: {}", path.display());
+        log::info!("CompileActor: on export: {}", path.display());
 
         let (tx, rx) = oneshot::channel();
         let _ = self.export_tx.send(ExportRequest::Oneshot(Some(kind), tx));
         let res: Option<PathBuf> = utils::threaded_receive(rx)?;
 
-        info!("CompileActor: on export end: {path:?} as {res:?}");
+        log::info!("CompileActor: on export end: {path:?} as {res:?}");
         Ok(res)
     }
 
     pub fn on_save_export(&self, path: PathBuf) -> anyhow::Result<()> {
-        info!("CompileActor: on save export: {}", path.display());
+        log::info!("CompileActor: on save export: {}", path.display());
         let _ = self.export_tx.send(ExportRequest::OnSaved(path));
 
         Ok(())

@@ -59,7 +59,6 @@ walkdir.workspace = true
 typst-preview = { workspace = true, optional = true }
 async-lsp.workspace = true
 lsp-types.workspace = true
-crossbeam-channel.workspace = true
 dhat = { version = "0.3.3", optional = true }
 chrono = { version = "0.4" }
 unicode-script = "0.5"

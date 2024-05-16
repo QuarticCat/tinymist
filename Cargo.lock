@@ -3838,7 +3838,6 @@ dependencies = [
  "clap_mangen",
  "codespan-reporting",
  "comemo 0.4.0",
- "crossbeam-channel",
  "dhat",
  "env_logger",
  "futures",

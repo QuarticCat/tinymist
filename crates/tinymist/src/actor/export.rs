@@ -1,13 +1,9 @@
 //! The actor that handles PDF export.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use anyhow::bail;
-use anyhow::Context;
-use log::{error, info};
+use anyhow::{bail, Context};
 use once_cell::sync::Lazy;
 use tinymist_query::{ExportKind, PageSelection};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -69,7 +65,7 @@ impl ExportActor {
     pub async fn run(mut self) {
         while let Some(mut req) = self.export_rx.recv().await {
             let Some(doc) = self.document.borrow().clone() else {
-                info!("RenderActor: document is not ready");
+                log::info!("RenderActor: document is not ready");
                 continue;
             };
 
@@ -91,7 +87,7 @@ impl ExportActor {
                         let kind = kind.as_ref().unwrap_or(&self.kind);
                         let resp = self.check_mode_and_export(kind, &doc).await;
                         if let Err(err) = callback.send(resp) {
-                            error!("RenderActor(@{kind:?}): failed to send response: {err:?}");
+                            log::error!("RenderActor(@{kind:?}): failed to send response: {err:?}");
                         }
                     }
                 }
@@ -115,7 +111,7 @@ impl ExportActor {
                     .send(EditorRequest::WordCount(self.group.clone(), wc));
             }
         }
-        info!("RenderActor(@{:?}): stopped", &self.kind);
+        log::info!("RenderActor(@{:?}): stopped", &self.kind);
     }
 
     async fn check_mode_and_export(
@@ -127,9 +123,9 @@ impl ExportActor {
         let root = self.config.entry.root();
         let main = self.config.entry.main();
 
-        info!(
-            "RenderActor: check path {:?} and root {:?} with output directory {}",
-            main, root, self.config.substitute_pattern
+        log::info!(
+            "RenderActor: check path {main:?} and root {root:?} with output directory {}",
+            self.config.substitute_pattern
         );
 
         let root = root?;
@@ -145,7 +141,7 @@ impl ExportActor {
         match self.export(kind, doc, &root, &path).await {
             Ok(pdf) => Some(pdf),
             Err(err) => {
-                error!("RenderActor({kind:?}): failed to export {err}");
+                log::error!("RenderActor({kind:?}): failed to export {err}");
                 None
             }
         }
@@ -172,7 +168,7 @@ impl ExportActor {
         }
 
         let to = to.with_extension(kind.extension());
-        info!("RenderActor({kind:?}): exporting {path:?} to {to:?}");
+        log::info!("RenderActor({kind:?}): exporting {path:?} to {to:?}");
 
         if let Some(e) = to.parent() {
             if !e.exists() {
@@ -205,7 +201,7 @@ impl ExportActor {
         std::fs::write(&to, data)
             .with_context(|| format!("RenderActor({kind:?}): failed to export"))?;
 
-        info!("RenderActor({kind:?}): export complete");
+        log::info!("RenderActor({kind:?}): export complete");
         Ok(to)
     }
 }
