@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
 use tinymist::compile_init::{CompileOnceArgs, FontArgs};
-use tinymist::transport::MirrorArgs;
+use tinymist::io::MirrorArgs;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
