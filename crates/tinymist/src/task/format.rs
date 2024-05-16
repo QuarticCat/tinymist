@@ -5,8 +5,7 @@ use lsp_types::TextEdit;
 use tinymist_query::{typst_to_lsp, PositionEncoding};
 use typst::syntax::Source;
 
-use crate::server::ResponseResult;
-use crate::FormatterMode;
+use crate::{FormatterMode, ResponseResult};
 
 pub async fn format(
     src: Source,

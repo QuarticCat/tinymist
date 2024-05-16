@@ -41,4 +41,5 @@ pub use server::compile;
 pub use server::compile_init;
 pub use server::lsp::*;
 pub use server::lsp_init::*;
+pub use server::*;
 pub use world::{CompileFontOpts, CompileOnceOpts, CompileOpts, LspWorld, LspWorldBuilder};

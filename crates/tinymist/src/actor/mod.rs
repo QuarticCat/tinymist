@@ -4,7 +4,6 @@ pub mod editor;
 pub mod export;
 pub mod typ_client;
 pub mod typ_server;
-pub mod user_action;
 
 use std::path::Path;
 
@@ -23,7 +22,6 @@ use self::{
     export::{ExportActor, ExportConfig},
     typ_client::{CompileClientActor, CompileDriver, CompileHandler},
     typ_server::CompileServerActor,
-    user_action::run_user_action_thread,
 };
 use crate::{
     compile::CompileState,
@@ -117,47 +115,5 @@ impl CompileState {
         });
 
         CompileClientActor::new(editor_group, self.config.clone(), entry, inner, export_tx)
-    }
-}
-
-impl TypstLanguageServer {
-    pub fn server(
-        &self,
-        diag_group: String,
-        entry: EntryState,
-        inputs: ImmutDict,
-    ) -> CompileClientActor {
-        // Take all dirty files in memory as the initial snapshot
-        self.primary
-            .server(diag_group, entry, inputs, self.primary.vfs_snapshot())
-    }
-
-    pub fn run_format_thread(&mut self) {
-        if self.format_thread.is_some() {
-            log::error!("formatting thread is already started");
-            return;
-        }
-
-        let (tx_req, rx_req) = crossbeam_channel::unbounded();
-        self.format_thread = Some(tx_req);
-
-        let client = self.client.clone();
-        let mode = self.config.formatter;
-        let enc = self.const_config.position_encoding;
-        let config = format::FormatConfig { mode, width: 120 };
-        std::thread::spawn(move || run_format_thread(config, rx_req, client, enc));
-    }
-
-    pub fn run_user_action_thread(&mut self) {
-        if self.user_action_thread.is_some() {
-            log::error!("user action threads are already started");
-            return;
-        }
-
-        let (tx_req, rx_req) = crossbeam_channel::unbounded();
-        self.user_action_thread = Some(tx_req);
-
-        let client = self.client.clone();
-        std::thread::spawn(move || run_user_action_thread(rx_req, client));
     }
 }

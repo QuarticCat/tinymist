@@ -25,7 +25,7 @@ impl LanguageState {
             ("tinymist.doInitTemplate", Self::init_template),
             ("tinymist.doGetTemplateEntry", Self::get_template_entry),
             ("tinymist.interactCodeContext", Self::interact_code_context),
-            ("tinymist.getDocumentTrace", Self::get_document_trace),
+            // ("tinymist.getDocumentTrace", Self::get_document_trace),
             ("tinymist.getDocumentMetrics", Self::get_document_metrics),
             ("tinymist.getServerInfo", Self::get_server_info),
             ("tinymist.getResources", Self::get_resources),
@@ -196,67 +196,6 @@ impl LanguageState {
         };
         query_source!(self, req)
     }
-
-    /// Get the trace data of the document.
-    pub fn get_document_trace(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        todo!("make user action be a task")
-    }
-
-    // /// Get the trace data of the document.
-    // pub fn get_document_trace(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-    //     let Some(path) = parse_arg::<ImmutPath>(&args, 0) else {
-    //         return invalid_params("expect path at args[0]");
-    //     };
-    //     let self_path = match std::env::current_exe() {
-    //         Ok(res) => res,
-    //         Err(err) => return internal_error(format!("Cannot get typst compiler {err}")),
-    //     };
-
-    //     let thread = self.user_action_thread.clone();
-    //     let entry = self.config.compile.determine_entry(Some(path));
-
-    //     let res = self
-    //         .primary()
-    //         .steal(move |c| {
-    //             let cc = &c.compiler;
-
-    //             // todo: rootless file
-    //             // todo: memory dirty file
-    //             let root = entry.root().ok_or_else(|| {
-    //                 anyhow::anyhow!("root must be determined for trace, got {entry:?}")
-    //             })?;
-    //             let main = entry
-    //                 .main()
-    //                 .and_then(|e| e.vpath().resolve(&root))
-    //                 .ok_or_else(|| anyhow::anyhow!("main file must be resolved, got {entry:?}"))?;
-
-    //             if let Some(f) = thread {
-    //                 f.send(UserActionRequest::Trace(
-    //                     req_id,
-    //                     TraceParams {
-    //                         compiler_program: self_path,
-    //                         root: root.as_ref().to_owned(),
-    //                         main,
-    //                         inputs: cc.world().inputs.as_ref().deref().clone(),
-    //                         font_paths: cc.world().font_resolver.font_paths().to_owned(),
-    //                     },
-    //                 ))
-    //                 .context("cannot send trace request")?;
-    //             } else {
-    //                 bail!("user action thread is not available");
-    //             }
-
-    //             Ok(Some(()))
-    //         })
-    //         .context("cannot steal primary compiler");
-
-    //     let res = match res {
-    //         Ok(res) => res,
-    //         Err(res) => Err(res),
-    //     };
-
-    //     res.map_err(|e| internal_error(format!("could not get document trace: {e}")))
-    // }
 
     /// Get the metrics of the document.
     pub fn get_document_metrics(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
