@@ -28,7 +28,6 @@
 
 mod actor;
 pub mod io;
-mod layer;
 mod resource;
 mod server;
 mod state;

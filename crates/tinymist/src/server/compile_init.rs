@@ -16,13 +16,13 @@ use typst::syntax::{FileId, VirtualPath};
 use typst::util::Deferred;
 use typst_ts_core::config::compiler::EntryState;
 use typst_ts_core::{ImmutPath, TypstDict};
+use async_lsp::ClientSocket;
 
 use super::*;
 use crate::actor::editor::EditorRequest;
 use crate::compile::CompileState;
-use crate::harness::LspDriver;
 use crate::world::{ImmutDict, SharedFontResolver};
-use crate::{CompileExtraOpts, CompileFontOpts, ExportMode, LspHost};
+use crate::{CompileExtraOpts, CompileFontOpts, ExportMode};
 
 #[cfg(feature = "clap")]
 const ENV_PATH_SEP: char = if cfg!(windows) { ';' } else { ':' };
@@ -311,27 +311,16 @@ pub struct CompileInit {
     pub editor_tx: mpsc::UnboundedSender<EditorRequest>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CompileInitializeParams {
-    pub config: serde_json::Value,
-    pub position_encoding: Option<lsp_types::PositionEncodingKind>,
-}
-
-impl LspDriver for CompileInit {
-    type InitParams = CompileInitializeParams;
-    type InitResult = ();
-    type InitializedSelf = CompileState;
+impl  CompileInit {
 
     fn initialize(
-        self,
-        client: LspHost<Self::InitializedSelf>,
-        params: Self::InitParams,
-    ) -> (
-        Self::InitializedSelf,
-        Result<Self::InitResult, lsp_server::ResponseError>,
+        &mut self,
+        client: ClientSocket,
+        config: serde_json::Value,
+position_encoding: Option<lsp_types::PositionEncodingKind>,
     ) {
         let mut compile_config = CompileConfig::default();
-        compile_config.update(&params.config).unwrap();
+        compile_config.update(&config).unwrap();
 
         // prepare fonts
         // todo: on font resolving failure, downgrade to a fake font book
@@ -352,8 +341,7 @@ impl LspDriver for CompileInit {
             client,
             compile_config,
             ConstCompileConfig {
-                position_encoding: params
-                    .position_encoding
+                position_encoding: position_encoding
                     .map(|x| match x.as_str() {
                         "utf-16" => PositionEncoding::Utf16,
                         _ => PositionEncoding::Utf8,
@@ -374,7 +362,5 @@ impl LspDriver for CompileInit {
         if service.compiler.replace(primary).is_some() {
             panic!("primary already initialized");
         }
-
-        (service, Ok(()))
     }
 }

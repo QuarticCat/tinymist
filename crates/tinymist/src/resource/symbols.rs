@@ -15,7 +15,7 @@ struct ResourceSymbolItem {
     glyphs: Vec<ResourceGlyphDesc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum SymCategory {
     Accent,
@@ -133,7 +133,7 @@ static CAT_MAP: Lazy<HashMap<&str, SymCategory>> = Lazy::new(|| {
 
 impl LanguageState {
     /// Get the all valid symbols
-    pub fn get_symbol_resources(&self) -> ZResult<JsonValue> {
+    pub async fn get_symbol_resources(&self) -> ZResult<JsonValue> {
         let mut symbols = ResourceSymbolMap::new();
         populate_scope(typst::symbols::sym().scope(), "sym", &mut symbols);
         // currently we don't have plan on emoji
@@ -166,9 +166,9 @@ impl LanguageState {
 
                 let mut last_hit: Option<typst_ts_core::TypstFont> = None;
 
-                log::info!("font init: {hit:?}", hit = last_hit);
+                log::info!("font init: {last_hit:?}");
 
-                let fonts = chars
+                chars
                     .chars()
                     .map(|c| {
                         for font in &preferred_fonts {
@@ -187,14 +187,13 @@ impl LanguageState {
                             book.select_fallback(None, FontVariant::default(), &c.to_string())?;
                         last_hit = e.compiler.world().font(hit);
 
-                        log::info!("font hit: {hit:?}", hit = last_hit);
+                        log::info!("font hit: {last_hit:?}");
 
                         last_hit.clone()
                     })
-                    .collect::<Vec<_>>();
-
-                fonts
+                    .collect::<Vec<_>>()
             })
+            .await
             .ok();
 
         let mut glyph_def = String::new();
@@ -305,14 +304,14 @@ fn populate(sym: &Symbol, mod_name: &str, sym_name: &str, out: &mut ResourceSymb
 
         let category = CAT_MAP
             .get(name.as_str())
-            .cloned()
+            .copied()
             .unwrap_or(SymCategory::Misc);
         out.insert(
             name,
             ResourceSymbolItem {
                 category,
                 unicode: ch as u32,
-                glyphs: vec![],
+                glyphs: Vec::new(),
             },
         );
     }

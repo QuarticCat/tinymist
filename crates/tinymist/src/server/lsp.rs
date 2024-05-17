@@ -7,7 +7,6 @@ use async_lsp::{LanguageServer, ResponseError};
 use lsp_types::request::*;
 use lsp_types::*;
 use tinymist_query::{self as q, url_to_path, SemanticTokenContext};
-use typst_ts_compiler::service::Compiler;
 use typst_ts_core::{Error as TypError, ImmutPath};
 
 use super::lsp_init::*;
@@ -96,7 +95,7 @@ pub struct LanguageState {
     /// Extra commands provided with `textDocument/executeCommand`.
     pub exec_cmds: ExecCmdMap<Self>,
     /// Regular commands for dispatching.
-    pub resource_routes: ExecCmdMap<Self>,
+    pub resource_routes: ResourceMap<Self>,
 
     /* Resources */
     /// The semantic token context.
@@ -224,7 +223,7 @@ impl LanguageServer for LanguageState {
         params: SemanticTokensParams,
     ) -> ResponseFuture<SemanticTokensFullRequest> {
         let req = q::SemanticTokensFullRequest {
-            path: url_to_path(params.text_document),
+            path: url_to_path(params.text_document.uri),
         };
         self.implicit_focus_entry(|| Some(req.path.as_path().into()), 't');
         query_tokens_cache!(self, req)
@@ -235,7 +234,7 @@ impl LanguageServer for LanguageState {
         params: SemanticTokensDeltaParams,
     ) -> ResponseFuture<SemanticTokensFullDeltaRequest> {
         let req = q::SemanticTokensDeltaRequest {
-            path: url_to_path(params.text_document),
+            path: url_to_path(params.text_document.uri),
             previous_result_id: params.previous_result_id,
         };
         self.implicit_focus_entry(|| Some(req.path.as_path().into()), 't');
@@ -268,15 +267,16 @@ impl LanguageServer for LanguageState {
             return ok(None);
         }
         let path = url_to_path(params.text_document.uri);
-        let Some(mem_file) = self.primary.memory_changes.get(&path) else {
+        let Some(mem_file) = self.primary.memory_changes.get(path.as_path()) else {
             return internal_error(format!("file missing: {path:?}"));
         };
-        Box::pin(tokio::spawn(task::format(
+        let fut = tokio::spawn(task::format(
             mem_file.content.clone(),
             self.config.formatter,
-            self.config.formatter_print_width,
+            self.config.formatter_print_width as _,
             self.const_config.position_encoding,
-        )))
+        ));
+        Box::pin(async move { fut.await.unwrap() })
     }
 
     /* Latency Insensitive Requests */
@@ -310,7 +310,7 @@ impl LanguageServer for LanguageState {
 
     fn code_action(&mut self, params: CodeActionParams) -> ResponseFuture<CodeActionRequest> {
         let req = q::CodeActionRequest {
-            path: url_to_path(params.text_document),
+            path: url_to_path(params.text_document.uri),
             range: params.range,
         };
         query_world!(self, req)
@@ -404,7 +404,7 @@ impl LanguageServer for LanguageState {
     }
 
     fn execute_command(&mut self, params: ExecuteCommandParams) -> ResponseFuture<ExecuteCommand> {
-        let Some(handler) = self.exec_cmds.get(&params.command) else {
+        let Some(handler) = self.exec_cmds.get(params.command.as_str()) else {
             return method_not_found(format!("unknown command: {}", params.command));
         };
         handler(self, params.arguments)

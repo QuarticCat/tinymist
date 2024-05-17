@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
 use lsp_types::TextDocumentIdentifier;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::to_value;
 use tinymist_query::{self as q, url_to_path};
 use typst::diag::StrResult;
 use typst::syntax::package::{PackageSpec, VersionlessPackageSpec};
-use typst_ts_core::{error::prelude::*, ImmutPath};
+use typst_ts_compiler::service::Compiler;
+use typst_ts_core::error::prelude::*;
 
 use super::lsp::*;
 use super::*;
@@ -14,21 +15,22 @@ use crate::tools::package::InitTask;
 use crate::tools::package::{self, determine_latest_version, TemplateSource};
 
 impl LanguageState {
+    #[rustfmt::skip]
     pub fn get_exec_cmds() -> ExecCmdMap<Self> {
         HashMap::from_iter([
-            ("tinymist.exportPdf", Self::export_pdf),
-            ("tinymist.exportSvg", Self::export_svg),
-            ("tinymist.exportPng", Self::export_png),
-            ("tinymist.doClearCache", Self::clear_cache),
-            ("tinymist.pinMain", Self::pin_document),
-            ("tinymist.focusMain", Self::focus_document),
-            ("tinymist.doInitTemplate", Self::init_template),
-            ("tinymist.doGetTemplateEntry", Self::get_template_entry),
-            ("tinymist.interactCodeContext", Self::interact_code_context),
-            // ("tinymist.getDocumentTrace", Self::get_document_trace),
-            ("tinymist.getDocumentMetrics", Self::get_document_metrics),
-            ("tinymist.getServerInfo", Self::get_server_info),
-            ("tinymist.getResources", Self::get_resources),
+            ("tinymist.exportPdf", Self::export_pdf as _),
+            ("tinymist.exportSvg", Self::export_svg as _),
+            ("tinymist.exportPng", Self::export_png as _),
+            ("tinymist.doClearCache", Self::clear_cache as _),
+            ("tinymist.pinMain", Self::pin_document as _),
+            ("tinymist.focusMain", Self::focus_document as _),
+            ("tinymist.doInitTemplate", Self::init_template as _),
+            ("tinymist.doGetTemplateEntry", Self::get_template_entry as _),
+            ("tinymist.interactCodeContext", Self::interact_code_context as _),
+            // ("tinymist.getDocumentTrace", Self::get_document_trace as _),
+            ("tinymist.getDocumentMetrics", Self::get_document_metrics as _),
+            ("tinymist.getServerInfo", Self::get_server_info as _),
+            ("tinymist.getResources", Self::get_resources as _),
         ])
     }
 
@@ -53,48 +55,52 @@ impl LanguageState {
         for v in &mut self.dedicates {
             v.clear_cache(Vec::new());
         }
-        ok(JsonValue::Null)
+        Box::pin(ready(Ok(Some(JsonValue::Null))))
     }
 
     /// Pin main file to some path.
-    pub fn pin_document(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(entry) = parse_arg::<Option<ImmutPath>>(&args, 0) else {
+    pub fn pin_document(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        let Some(entry) = get_arg::<Option<PathBuf>>(&mut args, 0) else {
             return invalid_params("expect path at args[0]");
         };
-        if let Err(err) = self.pin_entry(entry.clone()) {
-            return internal_error(format!("cannot pin file: {err}"));
-        }
-        log::info!("file pinned: {entry:?}");
-        ok(JsonValue::Null)
+        let entry = entry.map(Into::into);
+        Box::pin(async move {
+            match self.pin_entry(entry).await {
+                Ok(_) => Ok(Some(JsonValue::Null)),
+                Err(err) => internal_error_(format!("cannot pin file: {err}")),
+            }
+        })
     }
 
     /// Focus main file to some path.
-    pub fn focus_document(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(entry) = parse_arg::<Option<ImmutPath>>(&args, 0) else {
+    pub fn focus_document(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        let Some(entry) = get_arg::<Option<PathBuf>>(&mut args, 0) else {
             return invalid_params("expect path at args[0]");
         };
         if !self.ever_manual_focusing {
             self.ever_manual_focusing = true;
             log::info!("first manual focusing is coming");
         }
-        if let Err(err) = self.focus_entry(entry.clone()) {
-            return internal_error(format!("cannot focus file: {err}"));
-        }
-        log::info!("file focused: {entry:?}");
-        ok(JsonValue::Null)
+        let entry = entry.map(Into::into);
+        Box::pin(async move {
+            match self.focus_entry(entry).await {
+                Ok(_) => Ok(Some(JsonValue::Null)),
+                Err(err) => internal_error_(format!("cannot focus file: {err}")),
+            }
+        })
     }
 
     /// Initialize a new template.
-    pub fn init_template(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+    pub fn init_template(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
         #[derive(Debug, Serialize)]
         #[serde(rename_all = "camelCase")]
         struct InitResult {
             entry_path: PathBuf,
         }
-        let Some(from_source) = parse_arg::<String>(&args, 0) else {
+        let Some(from_source) = get_arg::<String>(&mut args, 0) else {
             return invalid_params("expect source at args[0]");
         };
-        let Some(to_path) = parse_arg::<Option<ImmutPath>>(&args, 1) else {
+        let Some(to_path) = get_arg::<Option<PathBuf>>(&mut args, 1) else {
             return invalid_params("expect path at args[1]");
         };
         let fut = self.primary().steal(move |c| {
@@ -117,20 +123,18 @@ impl LanguageState {
             let entry_path = package::init(
                 c.compiler.world(),
                 InitTask {
-                    tmpl: from_source.clone(),
-                    dir: to_path.clone(),
+                    tmpl: from_source,
+                    dir: to_path.map(Into::into),
                 },
             )
             .map_err(map_string_err("cannot initialize template"))?;
-
-            log::info!("template initialized: {from_source:?} to {to_path:?}");
 
             ZResult::Ok(InitResult { entry_path })
         });
         Box::pin(async move {
             match fut.await.and_then(|e| e) {
                 Ok(res) => match to_value(res) {
-                    Ok(res) => Ok(res),
+                    Ok(res) => Ok(Some(res)),
                     Err(err) => internal_error_("cannot serialize path"),
                 },
                 Err(err) => invalid_params_(format!("cannot determine template source: {err}")),
@@ -139,8 +143,11 @@ impl LanguageState {
     }
 
     /// Get the entry of a template.
-    pub fn get_template_entry(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(from_source) = parse_arg::<String>(&args, 0) else {
+    pub fn get_template_entry(
+        &mut self,
+        mut args: Vec<JsonValue>,
+    ) -> ResponseFuture<ExecuteCommand> {
+        let Some(from_source) = get_arg::<String>(&mut args, 0) else {
             return invalid_params("expect source at args[0]");
         };
         let fut = self.primary().steal(move |c| {
@@ -168,7 +175,7 @@ impl LanguageState {
         Box::pin(async move {
             match fut.await.and_then(|e| e) {
                 Ok(res) => match String::from_utf8(res.to_vec()) {
-                    Ok(res) => Ok(JsonValue::String(res)),
+                    Ok(res) => Ok(Some(JsonValue::String(res))),
                     Err(err) => invalid_params_("template entry is not a valid UTF-8 string"),
                 },
                 Err(err) => invalid_params_(format!("cannot determine template entry: {err}")),
@@ -179,7 +186,7 @@ impl LanguageState {
     /// Interact with the code context at the source file.
     pub fn interact_code_context(
         &mut self,
-        args: Vec<JsonValue>,
+        mut args: Vec<JsonValue>,
     ) -> ResponseFuture<ExecuteCommand> {
         #[derive(Debug, Clone, Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -187,22 +194,25 @@ impl LanguageState {
             pub text_document: TextDocumentIdentifier,
             pub query: Vec<tinymist_query::InteractCodeContextQuery>,
         }
-        let Some(params) = parse_arg::<InteractCodeContextParams>(&args, 0) else {
+        let Some(params) = get_arg::<InteractCodeContextParams>(&mut args, 0) else {
             return invalid_params("expect code context queries at args[0]");
         };
         let req = q::InteractCodeContextRequest {
-            path: url_to_path(params.text_document),
+            path: url_to_path(params.text_document.uri),
             query: params.query,
         };
         query_source!(self, req)
     }
 
     /// Get the metrics of the document.
-    pub fn get_document_metrics(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(path) = parse_arg::<ImmutPath>(&args, 0) else {
+    pub fn get_document_metrics(
+        &mut self,
+        mut args: Vec<JsonValue>,
+    ) -> ResponseFuture<ExecuteCommand> {
+        let Some(path) = get_arg::<PathBuf>(&mut args, 0) else {
             return invalid_params("expect path at args[0]");
         };
-        let req = q::DocumentMetricsRequest { path };
+        let req = q::DocumentMetricsRequest { path: path.into() };
         query_state!(self, req)
     }
 
@@ -214,22 +224,23 @@ impl LanguageState {
 
     // Get static resources with help of tinymist service, for example, a
     /// static help pages for some typst function.
-    pub fn get_resources(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(path) = parse_arg::<ImmutPath>(&args, 0) else {
+    pub fn get_resources(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        let Some(path) = get_arg::<PathBuf>(&mut args, 0) else {
             return invalid_params("expect path at args[0]");
         };
-        let Some(handler) = self.resource_routes.get(&path) else {
-            return method_not_found(format!("unknown resource: {}", path));
+        let Some(handler) = self.resource_routes.get(path.as_path()) else {
+            return method_not_found(format!("unknown resource: {path:?}"));
         };
         handler(self, args)
     }
 }
 
 impl LanguageState {
-    pub fn get_resource_routes() -> ExecCmdMap<Self> {
+    #[rustfmt::skip]
+    pub fn get_resource_routes() -> ResourceMap<Self> {
         HashMap::from_iter([
-            ("/symbols", Self::resource_symbols),
-            ("/tutorial", Self::resource_tutoral),
+            (Path::new("/symbols"), Self::resource_symbols as _),
+            (Path::new("/tutorial"), Self::resource_tutoral as _),
         ])
     }
 

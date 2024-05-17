@@ -13,22 +13,29 @@ use crate::{compile::CompileState, LanguageState};
 
 impl CompileState {
     /// Focus main file to some path.
-    pub fn do_change_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<bool, TypError> {
-        self.compiler.as_mut().unwrap().change_entry(new_entry)
+    pub async fn do_change_entry(
+        &mut self,
+        new_entry: Option<ImmutPath>,
+    ) -> Result<bool, TypError> {
+        self.compiler
+            .as_mut()
+            .unwrap()
+            .change_entry(new_entry)
+            .await
     }
 }
 
 impl LanguageState {
     /// Pin the entry to the given path
-    pub fn pin_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<(), TypError> {
+    pub async fn pin_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<(), TypError> {
         self.pinning = new_entry.is_some();
-        self.primary.do_change_entry(new_entry)?;
+        self.primary.do_change_entry(new_entry).await?;
 
         if !self.pinning {
             let fallback = self.config.compile.determine_default_entry_path();
             let fallback = fallback.or_else(|| self.focusing.clone());
             if let Some(e) = fallback {
-                self.primary.do_change_entry(Some(e))?;
+                self.primary.do_change_entry(Some(e)).await?;
             }
         }
 
@@ -36,13 +43,13 @@ impl LanguageState {
     }
 
     /// Updates the primary (focusing) entry
-    pub fn focus_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<bool, TypError> {
+    pub async fn focus_entry(&mut self, new_entry: Option<ImmutPath>) -> Result<bool, TypError> {
         if self.pinning || self.config.compile.has_default_entry_path {
             self.focusing = new_entry;
             return Ok(false);
         }
 
-        self.primary.do_change_entry(new_entry.clone())
+        self.primary.do_change_entry(new_entry.clone()).await
     }
 
     /// This is used for tracking activating document status if a client is not
@@ -53,7 +60,7 @@ impl LanguageState {
     /// We do want to focus the file implicitly by `textDocument/diagnostic`
     /// (pullDiagnostics mode), as suggested by language-server-protocol#718,
     /// however, this has poor support, e.g. since neovim 0.10.0.
-    pub fn implicit_focus_entry(
+    pub async fn implicit_focus_entry(
         &mut self,
         new_entry: impl FnOnce() -> Option<ImmutPath>,
         site: char,
@@ -77,14 +84,9 @@ impl LanguageState {
 
         let new_entry = new_entry();
 
-        let update_result = self.focus_entry(new_entry.clone());
-        match update_result {
-            Ok(true) => {
-                log::info!("file focused[implicit,{site}]: {new_entry:?}");
-            }
-            Err(err) => {
-                log::warn!("could not focus file: {err}");
-            }
+        match self.focus_entry(new_entry.clone()).await {
+            Ok(true) => log::info!("file focused[implicit,{site}]: {new_entry:?}"),
+            Err(err) => log::warn!("could not focus file: {err}"),
             Ok(false) => {}
         }
     }

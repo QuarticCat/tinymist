@@ -47,7 +47,7 @@ impl CompileState {
         Self {
             config: Default::default(),
             const_config: Default::default(),
-            
+
             exec_cmds: Self::get_exec_cmds(),
 
             editor_tx,
@@ -71,7 +71,7 @@ impl LanguageServer for CompileState {
     }
 
     fn execute_command(&mut self, params: ExecuteCommandParams) -> ResponseFuture<ExecuteCommand> {
-        let Some(handler) = self.exec_cmds.get(&params.command) else {
+        let Some(handler) = self.exec_cmds.get(params.command.as_str()) else {
             return method_not_found(format!("unknown command: {}", params.command));
         };
         handler(self, params.arguments)

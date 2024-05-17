@@ -8,12 +8,39 @@ pub mod lsp_init;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::ready;
+use std::ops::{Deref, DerefMut};
+use std::path::Path;
 
 use async_lsp::{ErrorCode, ResponseError};
 use futures::future::BoxFuture;
 use lsp_types::request::{ExecuteCommand, Request};
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{from_value, Value as JsonValue};
+
+pub enum TwoStage<Uninit, Inited> {
+    Uninit(Uninit),
+    Inited(Inited),
+}
+
+impl<Uninit, Inited> Deref for TwoStage<Uninit, Inited> {
+    type Target = Inited;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Inited(this) => this,
+            _ => panic!("uninitialized"),
+        }
+    }
+}
+
+impl<Uninit, Inited> DerefMut for TwoStage<Uninit, Inited> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Inited(this) => this,
+            _ => panic!("uninitialized"),
+        }
+    }
+}
 
 fn try_<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
     f()
@@ -35,7 +62,7 @@ pub fn ok<R: Request>(res: R::Result) -> ResponseFuture<R> {
 }
 
 pub fn internal_error<R: Request>(msg: impl Display) -> ResponseFuture<R> {
-    Box::pin(internal_error_(msg))
+    Box::pin(ready(internal_error_::<R>(msg)))
 }
 
 pub fn internal_error_<R: Request>(msg: impl Display) -> ResponseResult<R> {
@@ -43,7 +70,7 @@ pub fn internal_error_<R: Request>(msg: impl Display) -> ResponseResult<R> {
 }
 
 pub fn invalid_params<R: Request>(msg: impl Display) -> ResponseFuture<R> {
-    Box::pin(invalid_params_(msg))
+    Box::pin(ready(invalid_params_::<R>(msg)))
 }
 
 pub fn invalid_params_<R: Request>(msg: impl Display) -> ResponseResult<R> {
@@ -51,7 +78,7 @@ pub fn invalid_params_<R: Request>(msg: impl Display) -> ResponseResult<R> {
 }
 
 pub fn method_not_found<R: Request>(msg: impl Display) -> ResponseFuture<R> {
-    Box::pin(method_not_found_(msg))
+    Box::pin(ready(method_not_found_::<R>(msg)))
 }
 
 pub fn method_not_found_<R: Request>(msg: impl Display) -> ResponseResult<R> {
@@ -60,22 +87,23 @@ pub fn method_not_found_<R: Request>(msg: impl Display) -> ResponseResult<R> {
 
 type ExecCmdHandler<S> = fn(&mut S, Vec<JsonValue>) -> ResponseFuture<ExecuteCommand>;
 type ExecCmdMap<S> = HashMap<&'static str, ExecCmdHandler<S>>;
+type ResourceMap<S> = HashMap<&'static Path, ExecCmdHandler<S>>;
 
 /// Get a parsed command argument.
 /// Return `None` when no arg or parse failed.
-fn parse_arg<'de, T: Deserialize<'de>>(args: &Vec<JsonValue>, idx: usize) -> Option<T> {
-    args.get(idx).and_then(|x| from_value::<T>(x).ok())
+fn get_arg<'de, T: DeserializeOwned>(args: &mut Vec<JsonValue>, idx: usize) -> Option<T> {
+    args.get_mut(idx).and_then(|x| from_value(x.take()).ok())
 }
 
 /// Get a parsed command argument.
 /// Return default when no arg.
 /// Return `None` when parse failed.
-fn parse_arg_or_default<'de, T: Deserialize<'de> + Default>(
-    args: &Vec<JsonValue>,
+fn get_arg_or_default<'de, T: DeserializeOwned + Default>(
+    args: &mut Vec<JsonValue>,
     idx: usize,
 ) -> Option<T> {
-    match args.get(idx) {
-        Some(arg) => from_value(arg).ok(),
+    match args.get_mut(idx) {
+        Some(arg) => from_value(arg.take()).ok(),
         None => Some(Default::default()),
     }
 }

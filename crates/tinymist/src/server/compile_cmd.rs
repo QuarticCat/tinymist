@@ -1,7 +1,8 @@
+use std::path::PathBuf;
+
 use serde::Deserialize;
 use serde_json::{to_value, Value as JsonValue};
 use tinymist_query::{ExportKind, PageSelection};
-use typst_ts_core::ImmutPath;
 
 use super::compile::*;
 use super::*;
@@ -12,13 +13,14 @@ struct ExportOpts {
 }
 
 impl CompileState {
+    #[rustfmt::skip]
     pub fn get_exec_cmds() -> ExecCmdMap<Self> {
         HashMap::from_iter([
-            ("tinymist.exportPdf", Self::export_pdf),
-            ("tinymist.exportSvg", Self::export_svg),
-            ("tinymist.exportPng", Self::export_png),
-            ("tinymist.doClearCache", Self::clear_cache),
-            ("tinymist.changeEntry", Self::change_entry),
+            ("tinymist.exportPdf", Self::export_pdf as _),
+            ("tinymist.exportSvg", Self::export_svg as _),
+            ("tinymist.exportPng", Self::export_png as _),
+            ("tinymist.doClearCache", Self::clear_cache as _),
+            ("tinymist.changeEntry", Self::change_entry as _),
         ])
     }
 
@@ -28,16 +30,16 @@ impl CompileState {
     }
 
     /// Export the current document as a Svg file.
-    pub fn export_svg(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(opts) = parse_arg_or_default::<ExportOpts>(&args, 1) else {
+    pub fn export_svg(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        let Some(opts) = get_arg_or_default::<ExportOpts>(&mut args, 1) else {
             return invalid_params("expect export opts at args[1]");
         };
         self.export(ExportKind::Svg { page: opts.page }, args)
     }
 
     /// Export the current document as a Png file.
-    pub fn export_png(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(opts) = parse_arg_or_default::<ExportOpts>(&args, 1) else {
+    pub fn export_png(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        let Some(opts) = get_arg_or_default::<ExportOpts>(&mut args, 1) else {
             return invalid_params("expect export opts at args[1]");
         };
         self.export(ExportKind::Png { page: opts.page }, args)
@@ -48,9 +50,9 @@ impl CompileState {
     pub fn export(
         &mut self,
         kind: ExportKind,
-        args: Vec<JsonValue>,
+        mut args: Vec<JsonValue>,
     ) -> ResponseFuture<ExecuteCommand> {
-        let Some(path) = parse_arg::<ImmutPath>(&args, 0) else {
+        let Some(path) = get_arg::<PathBuf>(&mut args, 0) else {
             return invalid_params("expect path at args[0]");
         };
         match self.compiler().on_export(kind, path) {
@@ -67,14 +69,13 @@ impl CompileState {
     }
 
     /// Focus main file to some path.
-    pub fn change_entry(&mut self, args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(entry) = parse_arg::<Option<ImmutPath>>(&args, 0) else {
+    pub fn change_entry(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
+        let Some(entry) = get_arg::<Option<PathBuf>>(&mut args, 0) else {
             return invalid_params("expect path at args[0]");
         };
-        if let Err(err) = self.do_change_entry(entry.clone()) {
+        if let Err(err) = self.do_change_entry(entry.map(Into::into)) {
             return internal_error(format!("cannot focus file: {err}"));
         };
-        log::info!("entry changed: {entry:?}");
         ok(JsonValue::Null)
     }
 }
