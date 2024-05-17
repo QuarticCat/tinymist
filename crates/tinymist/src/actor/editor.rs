@@ -2,8 +2,9 @@
 
 use std::collections::HashMap;
 
-use log::info;
-use lsp_types::{Diagnostic, Url};
+use async_lsp::ClientSocket;
+use lsp_types::notification::PublishDiagnostics;
+use lsp_types::{Diagnostic, PublishDiagnosticsParams, Url};
 use tinymist_query::{DiagnosticsMap, LspDiagnostic};
 use tokio::sync::mpsc;
 
@@ -16,7 +17,7 @@ pub enum EditorRequest {
 }
 
 pub struct EditorActor {
-    host: LspHost<TypstLanguageServer>,
+    client: ClientSocket,
     editor_rx: mpsc::UnboundedReceiver<EditorRequest>,
 
     diagnostics: HashMap<Url, HashMap<String, Vec<LspDiagnostic>>>,
@@ -27,13 +28,14 @@ pub struct EditorActor {
 
 impl EditorActor {
     pub fn new(
-        host: LspHost<TypstLanguageServer>,
+        client: ClientSocket,
         editor_rx: mpsc::UnboundedReceiver<EditorRequest>,
         notify_compile_status: bool,
     ) -> Self {
         Self {
-            host,
+            client,
             editor_rx,
+
             diagnostics: HashMap::new(),
             affect_map: HashMap::new(),
             published_primary: false,
@@ -48,7 +50,7 @@ impl EditorActor {
             match req {
                 EditorRequest::Diag(group, diagnostics) => {
                     let diag = diagnostics.as_ref().map(|e| e.len());
-                    info!("received diagnostics from {group}: diag({diag:?})");
+                    log::info!("received diagnostics from {group}: diag({diag:?})");
 
                     let with_primary = self.affect_map.len() == 1
                         && self.affect_map.contains_key("primary")
@@ -69,29 +71,27 @@ impl EditorActor {
                     log::debug!("received status request");
                     if self.notify_compile_status && group == "primary" {
                         compile_status = status;
-                        self.host.send_notification::<TinymistCompileStatus>(
-                            TinymistCompileStatus {
+                        self.client
+                            .notify::<TinymistCompileStatus>(TinymistCompileStatus {
                                 status: compile_status.clone(),
                                 words_count: words_count.clone(),
-                            },
-                        );
+                            });
                     }
                 }
                 EditorRequest::WordCount(group, wc) => {
                     log::debug!("received word count request");
                     if self.notify_compile_status && group == "primary" {
                         words_count = Some(wc);
-                        self.host.send_notification::<TinymistCompileStatus>(
-                            TinymistCompileStatus {
+                        self.client
+                            .notify::<TinymistCompileStatus>(TinymistCompileStatus {
                                 status: compile_status.clone(),
                                 words_count: words_count.clone(),
-                            },
-                        );
+                            });
                     }
                 }
             }
         }
-        info!("compile cluster actor is stopped");
+        log::info!("compile cluster actor is stopped");
     }
 
     async fn flush_primary_diagnostics(&mut self, enable: bool) {
@@ -104,7 +104,12 @@ impl EditorActor {
             let diags = diags.filter_map(|(g, diags)| (g != "primary" || enable).then_some(diags));
             let to_publish = diags.flatten().cloned().collect();
 
-            self.host.publish_diagnostics(url.clone(), to_publish, None);
+            self.client
+                .notify::<PublishDiagnostics>(PublishDiagnosticsParams {
+                    uri: url.clone(),
+                    diagnostics: to_publish,
+                    version: None,
+                });
         }
     }
 
@@ -168,7 +173,12 @@ impl EditorActor {
         };
 
         if group != "primary" || with_primary {
-            self.host.publish_diagnostics(url, to_publish, None)
+            self.client
+                .notify::<PublishDiagnostics>(PublishDiagnosticsParams {
+                    uri: url,
+                    diagnostics: to_publish,
+                    version: None,
+                });
         }
     }
 }

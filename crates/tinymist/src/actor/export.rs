@@ -1,4 +1,4 @@
-//! The actor that handles PDF export.
+//! The actor that handles PDF/SVG/PNG export.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
