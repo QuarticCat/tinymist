@@ -26,7 +26,9 @@ pub enum ExportRequest {
     OnTyped,
     OnSaved(PathBuf),
     Oneshot(Option<ExportKind>, oneshot::Sender<Option<PathBuf>>),
+    /// Change config except entry.
     ChangeConfig(ExportConfig),
+    /// Change entry.
     ChangeExportPath(EntryState),
 }
 
@@ -74,7 +76,12 @@ impl ExportActor {
             'accumulate: loop {
                 log::debug!("RenderActor: received request: {req:?}");
                 match req {
-                    ExportRequest::ChangeConfig(cfg) => self.config = cfg,
+                    ExportRequest::ChangeConfig(config) => {
+                        self.config = ExportConfig {
+                            entry: self.config.entry,
+                            ..config
+                        }
+                    }
                     ExportRequest::ChangeExportPath(entry) => self.config.entry = entry,
                     ExportRequest::OnTyped => need_export |= self.config.mode == ExportMode::OnType,
                     ExportRequest::OnSaved(..) => match self.config.mode {

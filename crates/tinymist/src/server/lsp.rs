@@ -135,7 +135,7 @@ impl LanguageState {
 
     /// Get the primary compiler for those commands without task context.
     pub fn primary(&self) -> &CompileClientActor {
-        self.primary.compiler.as_ref().unwrap()
+        self.primary.compiler()
     }
 
     /// Change entry if needed.

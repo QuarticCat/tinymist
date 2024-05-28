@@ -49,8 +49,8 @@ use typst::{
     World as TypstWorld,
 };
 use typst_ts_compiler::{
-    service::{CompileDriverImpl, CompileEnv, CompileMiddleware, Compiler, EntryManager, EnvWorld},
-    vfs::notify::{FileChangeSet, MemoryEvent},
+    service::{CompileDriverImpl, CompileEnv, CompileMiddleware, Compiler, EnvWorld},
+    vfs::notify::MemoryEvent,
     Time,
 };
 use typst_ts_core::{
@@ -61,7 +61,7 @@ use typst_ts_core::{
 use super::{
     editor::{EditorRequest, TinymistCompileStatusEnum},
     export::ExportConfig,
-    typ_server::{CompileClient as TsCompileClient, CompileServerActor},
+    typ_server::{CompileClient as TsCompileClient, CompileServerActor, Interrupt},
 };
 use crate::{
     actor::export::ExportRequest,
@@ -343,41 +343,13 @@ impl CompileClientActor {
             return Err(error_once!("entry file must be absolute", path: path.unwrap().display()));
         }
 
-        let next_entry = self.config.determine_entry(path);
-        if next_entry == self.entry {
-            return Ok(false);
-        }
+        let entry = self.config.determine_entry(path);
 
-        let diag_group = &self.diag_group;
-        log::info!("the entry file of TypstActor({diag_group}) is changing to {next_entry:?}");
-
-        // todo
-        let next = next_entry.clone();
-        self.steal(move |compiler| {
-            compiler.change_entry(next.clone());
-
-            let next_is_inactive = next.is_inactive();
-            let res = compiler.compiler.world_mut().mutate_entry(next);
-
-            if next_is_inactive {
-                log::info!("TypstActor: removing diag");
-                compiler.compiler.compiler.handler.push_diagnostics(None);
-            }
-
-            res.map(|_| ())
-                .map_err(|err| error_once!("failed to change entry", err: format!("{err:?}")))
-        })
-        .await??;
-
-        let entry = next_entry.clone();
-        let req = ExportRequest::ChangeExportPath(entry);
-        let _ = self.export_tx.send(req);
-
-        // todo: better way to trigger recompile
-        let files = FileChangeSet::new_inserts(vec![]);
-        self.inner().add_memory_changes(MemoryEvent::Update(files));
-
-        self.entry = next_entry;
+        let _ = self
+            .inner()
+            .intr_tx
+            .send(Interrupt::ChangeEntry(entry.clone()));
+        let _ = self.export_tx.send(ExportRequest::ChangeExportPath(entry));
 
         Ok(true)
     }
@@ -387,13 +359,7 @@ impl CompileClientActor {
     }
 
     pub(crate) fn change_export_pdf(&mut self, config: ExportConfig) {
-        let entry = self.entry.clone();
-        let _ = self
-            .export_tx
-            .send(ExportRequest::ChangeConfig(ExportConfig {
-                entry,
-                ..config
-            }));
+        let _ = self.export_tx.send(ExportRequest::ChangeConfig(config));
     }
 
     pub async fn clear_cache(&self) {
@@ -425,20 +391,12 @@ impl CompileClientActor {
         .map_err(|e| e.into())
     }
 
-    pub async fn on_export(
-        &self,
-        kind: ExportKind,
-        path: PathBuf,
-    ) -> anyhow::Result<Option<PathBuf>> {
+    pub fn on_export(&self, kind: ExportKind, path: PathBuf) -> oneshot::Receiver<Option<PathBuf>> {
         // todo: we currently doesn't respect the path argument...
         log::info!("CompileActor: on export: {}", path.display());
-
         let (tx, rx) = oneshot::channel();
         let _ = self.export_tx.send(ExportRequest::Oneshot(Some(kind), tx));
-        let res: Option<PathBuf> = rx.await?;
-
-        log::info!("CompileActor: on export end: {path:?} as {res:?}");
-        Ok(res)
+        rx
     }
 
     pub fn on_save_export(&self, path: PathBuf) {

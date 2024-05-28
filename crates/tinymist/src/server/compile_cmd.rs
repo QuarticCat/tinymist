@@ -49,10 +49,13 @@ impl CompileState {
         mut args: Vec<JsonValue>,
     ) -> ResponseFuture<ExecuteCommand> {
         let path = get_arg!(args[0] as PathBuf);
-        match self.compiler().on_export(kind, path) {
-            Ok(res) => resp!(Ok(to_value(res).ok())),
-            Err(err) => resp!(Err(internal_error("failed to export: {err}"))),
-        }
+        let rx = self.compiler().on_export(kind, path);
+        Box::pin(async move {
+            match rx.await {
+                Ok(res) => Ok(to_value(res).ok()),
+                Err(_) => Err(internal_error("failed to export: {err}")),
+            }
+        })
     }
 
     /// Clear all cached resources.

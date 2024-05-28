@@ -47,7 +47,7 @@ impl EntryStateExt for EntryState {
     }
 }
 
-enum Interrupt<Ctx> {
+pub enum Interrupt<Ctx> {
     /// Compile anyway.
     Compile,
     /// Borrow the compiler thread and run the task.
@@ -58,6 +58,8 @@ enum Interrupt<Ctx> {
     Memory(MemoryEvent),
     /// File system event.
     Fs(FilesystemEvent),
+    /// Request compiler to change entry.
+    ChangeEntry(EntryState),
     /// Request compiler to stop.
     Settle(oneshot::Sender<()>),
 }
@@ -233,17 +235,6 @@ where
         log::info!("CompileServerActor: exited");
     }
 
-    pub(crate) fn change_entry(&mut self, entry: EntryState) {
-        self.suspend_state.suspended = entry.is_inactive();
-        if !self.suspend_state.suspended && self.suspend_state.dirty {
-            self.steal_tx.send(Interrupt::Compile).ok();
-        }
-
-        // Reset the document state.
-        self.latest_doc = None;
-        self.latest_success_doc = None;
-    }
-
     /// Compile the document.
     fn compile(&mut self, send: impl Fn(NotifyMessage)) {
         if self.suspend_state.suspended {
@@ -333,6 +324,36 @@ where
 
                 true
             }
+            Interrupt::ChangeEntry(entry) => {
+                log::debug!("CompileServerActor: changing entry {entry:?}");
+
+                // todo: change the API to `.entry()` that returns a reference.
+                let old_entry = self.compiler.world().entry_state();
+                if entry == old_entry {
+                    todo!("send back result");
+                    return false;
+                }
+
+                self.suspend_state.suspended = entry.is_inactive();
+                if !self.suspend_state.suspended && self.suspend_state.dirty {
+                    let _ = self.steal_tx.send(Interrupt::Compile);
+                }
+
+                // Reset the document state.
+                self.latest_doc = None;
+                self.latest_success_doc = None;
+
+                // todo: change the API to `.entry_mut()` that returns a reference.
+                let res = self.compiler.world_mut().mutate_entry(entry);
+
+                if self.suspend_state.suspended {
+                    log::info!("CompileServerActor: removing diag");
+                    self.compiler.compiler.handler.push_diagnostics(None);
+                }
+
+                todo!("send back result");
+                true
+            }
             Interrupt::Settle(_) => unreachable!(),
         }
     }
@@ -406,7 +427,7 @@ impl<C: Compiler> CompileServerActor<C> {
 
 #[derive(Debug, Clone)]
 pub struct CompileClient<Ctx> {
-    intr_tx: mpsc::UnboundedSender<Interrupt<Ctx>>,
+    pub(crate) intr_tx: mpsc::UnboundedSender<Interrupt<Ctx>>,
 }
 
 impl<Ctx> CompileClient<Ctx> {
@@ -426,7 +447,7 @@ impl<Ctx> CompileClient<Ctx> {
             if tx.send(f(this)).is_err() {
                 // Receiver was dropped. The main thread may have exited, or the request may
                 // have been cancelled.
-                log::warn!("could not send back return value from Typst thread");
+                log::warn!("failed to send back return value from Typst thread");
             }
         });
 

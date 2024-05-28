@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::bail;
+use async_lsp::ClientSocket;
 use clap::builder::ValueParser;
 use clap::{ArgAction, Parser};
 use comemo::Prehashed;
@@ -16,7 +17,6 @@ use typst::syntax::{FileId, VirtualPath};
 use typst::util::Deferred;
 use typst_ts_core::config::compiler::EntryState;
 use typst_ts_core::{ImmutPath, TypstDict};
-use async_lsp::ClientSocket;
 
 use super::*;
 use crate::actor::editor::EditorRequest;
@@ -311,13 +311,12 @@ pub struct CompileInit {
     pub editor_tx: mpsc::UnboundedSender<EditorRequest>,
 }
 
-impl  CompileInit {
-
+impl CompileInit {
     fn initialize(
         &mut self,
         client: ClientSocket,
         config: serde_json::Value,
-position_encoding: Option<lsp_types::PositionEncodingKind>,
+        position_encoding: Option<lsp_types::PositionEncodingKind>,
     ) {
         let mut compile_config = CompileConfig::default();
         compile_config.update(&config).unwrap();
