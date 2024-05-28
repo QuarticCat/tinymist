@@ -64,7 +64,7 @@ impl LanguageState {
         Box::pin(async move {
             match self.pin_entry(entry).await {
                 Ok(_) => Ok(Some(JsonValue::Null)),
-                Err(err) => internal_error_(format!("cannot pin file: {err}")),
+                Err(err) => Err(internal_error(format!("cannot pin file: {err}"))),
             }
         })
     }
@@ -80,7 +80,7 @@ impl LanguageState {
         Box::pin(async move {
             match self.focus_entry(entry).await {
                 Ok(_) => Ok(Some(JsonValue::Null)),
-                Err(err) => internal_error_(format!("cannot focus file: {err}")),
+                Err(err) => Err(internal_error(format!("cannot focus file: {err}"))),
             }
         })
     }
@@ -126,9 +126,9 @@ impl LanguageState {
             match fut.await.and_then(|e| e) {
                 Ok(res) => match to_value(res) {
                     Ok(res) => Ok(Some(res)),
-                    Err(err) => internal_error_("cannot serialize path"),
+                    Err(err) => Err(internal_error("cannot serialize path")),
                 },
-                Err(err) => invalid_params_(format!("cannot determine template source: {err}")),
+                Err(err) => Err(invalid_params(format!("cannot determine template source: {err}"))),
             }
         })
     }
@@ -165,9 +165,9 @@ impl LanguageState {
             match fut.await.and_then(|e| e) {
                 Ok(res) => match String::from_utf8(res.to_vec()) {
                     Ok(res) => Ok(Some(JsonValue::String(res))),
-                    Err(err) => invalid_params_("template entry is not a valid UTF-8 string"),
+                    Err(err) => Err(invalid_params("template entry is not a valid UTF-8 string")),
                 },
-                Err(err) => invalid_params_(format!("cannot determine template entry: {err}")),
+                Err(err) => Err(invalid_params(format!("cannot determine template entry: {err}"))),
             }
         })
     }
@@ -212,7 +212,7 @@ impl LanguageState {
     pub fn get_resources(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
         let path = get_arg!(args[0] as PathBuf);
         let Some(handler) = self.resource_routes.get(path.as_path()) else {
-            return method_not_found(format!("unknown resource: {path:?}"));
+            return resp!(Err(method_not_found(format!("unknown resource: {path:?}"))));
         };
         handler(self, args)
     }
@@ -230,13 +230,13 @@ impl LanguageState {
     /// Get the all valid symbols
     pub fn resource_symbols(&mut self, _args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
         match self.get_symbol_resources() {
-            Ok(res) => ok(res),
-            Err(err) => internal_error(err),
+            Ok(res) => resp!(Ok(res)),
+            Err(err) => resp!(Err(internal_error(err))),
         }
     }
 
     /// Get tutorial web page
     pub fn resource_tutoral(&mut self, _args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        method_not_found("unimplemented")
+        resp!(Err(method_not_found("unimplemented")))
     }
 }

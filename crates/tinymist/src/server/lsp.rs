@@ -20,12 +20,15 @@ use crate::world::CompileFontOpts;
 // todo: create a trait for these requests and make it a function
 macro_rules! query_source {
     ($self:ident, $req:ident) => {{
-        let Some(mem_file) = $self.primary.memory_changes.get($req.path.as_path()) else {
-            return internal_error(format!("file missing: {:?}", $req.path));
+        let path = $req.path;
+        let Some(mem_file) = $self.primary.memory_changes.get(path.as_path()) else {
+            return resp!(Err(internal_error(format!("file missing: {path:?}"))));
         };
         let source = mem_file.content.clone();
         // todo: pass source by value to avoid one extra clone
-        ok($req.request(&source, $self.const_config.position_encoding))
+        resp!(Ok(
+            $req.request(&source, $self.const_config.position_encoding)
+        ))
     }};
 }
 pub(super) use query_source;
@@ -34,11 +37,12 @@ pub(super) use query_source;
 // todo: create a trait for these requests and make it a function
 macro_rules! query_tokens_cache {
     ($self:ident, $req:ident) => {{
-        let Some(mem_file) = $self.primary.memory_changes.get($req.path.as_path()) else {
-            return internal_error(format!("file missing: {:?}", $req.path));
+        let path = $req.path;
+        let Some(mem_file) = $self.primary.memory_changes.get(path.as_path()) else {
+            return resp!(Err(internal_error(format!("file missing: {path:?}"))));
         };
         let source = mem_file.content.clone();
-        ok($req.request(&$self.tokens_ctx, source))
+        resp!(Ok($req.request(&$self.tokens_ctx, source)))
     }};
 }
 pub(super) use query_tokens_cache;
@@ -47,7 +51,7 @@ pub(super) use query_tokens_cache;
 macro_rules! query_state {
     ($self:ident, $req:ident) => {{
         if let Err(err) = $self.update_entry(&$req.path) {
-            return internal_error(format!("cannot update entry: {err:?}"));
+            return resp!(Err(internal_error(format!("cannot update entry: {err:?}"))));
         }
         let fut = $self.primary().steal_state(move |w, d| $req.request(w, d));
         Box::pin(async move { fut.await.or_else(internal_error) })
@@ -59,7 +63,7 @@ pub(super) use query_state;
 macro_rules! query_world {
     ($self:ident, $req:ident) => {{
         if let Err(err) = $self.update_entry(&$req.path) {
-            return internal_error(format!("cannot update entry: {err:?}"));
+            return resp!(Err(internal_error(format!("cannot update entry: {err:?}"))));
         }
         let fut = $self.primary().steal_world(move |w| $req.request(w));
         Box::pin(async move { fut.await.or_else(internal_error) })
@@ -151,8 +155,7 @@ impl LanguageServer for LanguageState {
     /* Lifecycle */
 
     fn initialize(&mut self, params: InitializeParams) -> ResponseFuture<Initialize> {
-        let res = self.init(params);
-        ok(res)
+        resp!(self.init(params))
     }
 
     fn initialized(&mut self, params: InitializedParams) -> Self::NotifyResult {
@@ -264,11 +267,11 @@ impl LanguageServer for LanguageState {
 
     fn formatting(&mut self, params: DocumentFormattingParams) -> ResponseFuture<Formatting> {
         if self.config.formatter == FormatterMode::Disable {
-            return ok(None);
+            return resp!(Ok(None));
         }
         let path = url_to_path(params.text_document.uri);
         let Some(mem_file) = self.primary.memory_changes.get(path.as_path()) else {
-            return internal_error(format!("file missing: {path:?}"));
+            return resp!(Err(internal_error(format!("file missing: {path:?}"))));
         };
         let fut = tokio::spawn(task::format(
             mem_file.content.clone(),
@@ -305,7 +308,7 @@ impl LanguageServer for LanguageState {
             color: params.color,
             range: params.range,
         };
-        ok(req.request())
+        resp!(Ok(req.request().unwrap()))
     }
 
     fn code_action(&mut self, params: CodeActionParams) -> ResponseFuture<CodeActionRequest> {
@@ -404,8 +407,9 @@ impl LanguageServer for LanguageState {
     }
 
     fn execute_command(&mut self, params: ExecuteCommandParams) -> ResponseFuture<ExecuteCommand> {
-        let Some(handler) = self.exec_cmds.get(params.command.as_str()) else {
-            return method_not_found(format!("unknown command: {}", params.command));
+        let cmd = params.command;
+        let Some(handler) = self.exec_cmds.get(cmd.as_str()) else {
+            return resp!(Err(method_not_found(format!("unknown command: {cmd}"))));
         };
         handler(self, params.arguments)
     }

@@ -56,32 +56,23 @@ fn try_or_default<T: Default>(f: impl FnOnce() -> Option<T>) -> T {
 pub type ResponseResult<R> = Result<<R as Request>::Result, ResponseError>;
 pub type ResponseFuture<R> = BoxFuture<'static, ResponseResult<R>>;
 
-pub fn ok<R: Request>(res: R::Result) -> ResponseFuture<R> {
-    Box::pin(ready(Ok(res)))
+macro_rules! resp {
+    ($expr:expr) => {
+        Box::pin(ready($expr))
+    };
+}
+use resp;
+
+pub fn internal_error(msg: impl Display) -> ResponseError {
+    ResponseError::new(ErrorCode::INTERNAL_ERROR, msg)
 }
 
-pub fn internal_error<R: Request>(msg: impl Display) -> ResponseFuture<R> {
-    Box::pin(ready(internal_error_::<R>(msg)))
+pub fn invalid_params(msg: impl Display) -> ResponseError {
+    ResponseError::new(ErrorCode::INVALID_PARAMS, msg)
 }
 
-pub fn internal_error_<R: Request>(msg: impl Display) -> ResponseResult<R> {
-    Err(ResponseError::new(ErrorCode::INTERNAL_ERROR, msg))
-}
-
-pub fn invalid_params<R: Request>(msg: impl Display) -> ResponseFuture<R> {
-    Box::pin(ready(invalid_params_::<R>(msg)))
-}
-
-pub fn invalid_params_<R: Request>(msg: impl Display) -> ResponseResult<R> {
-    Err(ResponseError::new(ErrorCode::INVALID_PARAMS, msg))
-}
-
-pub fn method_not_found<R: Request>(msg: impl Display) -> ResponseFuture<R> {
-    Box::pin(ready(method_not_found_::<R>(msg)))
-}
-
-pub fn method_not_found_<R: Request>(msg: impl Display) -> ResponseResult<R> {
-    Err(ResponseError::new(ErrorCode::METHOD_NOT_FOUND, msg))
+pub fn method_not_found(msg: impl Display) -> ResponseError {
+    ResponseError::new(ErrorCode::METHOD_NOT_FOUND, msg)
 }
 
 type ExecCmdHandler<S> = fn(&mut S, Vec<JsonValue>) -> ResponseFuture<ExecuteCommand>;
@@ -97,10 +88,8 @@ macro_rules! get_arg {
         match arg {
             Some(v) => v,
             None => {
-                return Box::pin(ready(Err(ResponseError::new(
-                    ErrorCode::INVALID_PARAMS,
-                    concat!("expect ", stringify!($ty), "at args[", $idx, "]"),
-                ))));
+                let msg = concat!("expect ", stringify!($ty), "at args[", $idx, "]");
+                return Box::pin(ready(Err(invalid_params(msg))));
             }
         }
     }};

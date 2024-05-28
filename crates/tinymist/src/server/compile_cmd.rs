@@ -50,8 +50,8 @@ impl CompileState {
     ) -> ResponseFuture<ExecuteCommand> {
         let path = get_arg!(args[0] as PathBuf);
         match self.compiler().on_export(kind, path) {
-            Ok(res) => ok(to_value(res).unwrap()),
-            Err(err) => internal_error("failed to export: {err}"),
+            Ok(res) => resp!(Ok(to_value(res).ok())),
+            Err(err) => resp!(Err(internal_error("failed to export: {err}"))),
         }
     }
 
@@ -59,15 +59,15 @@ impl CompileState {
     pub fn clear_cache(&mut self, _args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
         comemo::evict(0);
         self.compiler().clear_cache();
-        ok(JsonValue::Null)
+        resp!(Ok(Some(JsonValue::Null)))
     }
 
     /// Focus main file to some path.
     pub fn change_entry(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
         let entry = get_arg!(args[0] as Option<PathBuf>);
         if let Err(err) = self.do_change_entry(entry.map(Into::into)) {
-            return internal_error(format!("cannot change entry: {err}"));
+            return resp!(Err(internal_error(format!("cannot change entry: {err}"))));
         };
-        ok(JsonValue::Null)
+        resp!(Ok(Some(JsonValue::Null)))
     }
 }

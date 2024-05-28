@@ -71,8 +71,9 @@ impl LanguageServer for CompileState {
     }
 
     fn execute_command(&mut self, params: ExecuteCommandParams) -> ResponseFuture<ExecuteCommand> {
-        let Some(handler) = self.exec_cmds.get(params.command.as_str()) else {
-            return method_not_found(format!("unknown command: {}", params.command));
+        let cmd = params.command;
+        let Some(handler) = self.exec_cmds.get(cmd.as_str()) else {
+            return resp!(Err(method_not_found(format!("unknown command: {cmd}"))));
         };
         handler(self, params.arguments)
     }
