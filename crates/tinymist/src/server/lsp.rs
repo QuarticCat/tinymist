@@ -20,7 +20,7 @@ use crate::world::CompileFontOpts;
 // todo: create a trait for these requests and make it a function
 macro_rules! query_source {
     ($self:ident, $req:ident) => {{
-        let Some(mem_file) = $self.primary.memory_changes.get(&$req.path) else {
+        let Some(mem_file) = $self.primary.memory_changes.get($req.path.as_path()) else {
             return internal_error(format!("file missing: {:?}", $req.path));
         };
         let source = mem_file.content.clone();
@@ -34,7 +34,7 @@ pub(super) use query_source;
 // todo: create a trait for these requests and make it a function
 macro_rules! query_tokens_cache {
     ($self:ident, $req:ident) => {{
-        let Some(mem_file) = $self.primary.memory_changes.get(&$req.path) else {
+        let Some(mem_file) = $self.primary.memory_changes.get($req.path.as_path()) else {
             return internal_error(format!("file missing: {:?}", $req.path));
         };
         let source = mem_file.content.clone();
@@ -135,12 +135,12 @@ impl LanguageState {
     }
 
     /// Change entry if needed.
-    pub fn update_entry(&mut self, path: &Path) -> Result<bool, TypError> {
+    pub async fn update_entry(&mut self, path: &Path) -> Result<bool, TypError> {
         if self.pinning || self.config.compile.has_default_entry_path {
             return Ok(false);
         }
         // todo: race condition, we need atomic primary query
-        self.primary.do_change_entry(Some(path.into()))
+        self.primary.do_change_entry(Some(path.into())).await
     }
 }
 

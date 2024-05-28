@@ -31,17 +31,13 @@ impl CompileState {
 
     /// Export the current document as a Svg file.
     pub fn export_svg(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(opts) = get_arg_or_default::<ExportOpts>(&mut args, 1) else {
-            return invalid_params("expect export opts at args[1]");
-        };
+        let opts = get_arg_or_default!(args[1] as ExportOpts);
         self.export(ExportKind::Svg { page: opts.page }, args)
     }
 
     /// Export the current document as a Png file.
     pub fn export_png(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(opts) = get_arg_or_default::<ExportOpts>(&mut args, 1) else {
-            return invalid_params("expect export opts at args[1]");
-        };
+        let opts = get_arg_or_default!(args[1] as ExportOpts);
         self.export(ExportKind::Png { page: opts.page }, args)
     }
 
@@ -52,9 +48,7 @@ impl CompileState {
         kind: ExportKind,
         mut args: Vec<JsonValue>,
     ) -> ResponseFuture<ExecuteCommand> {
-        let Some(path) = get_arg::<PathBuf>(&mut args, 0) else {
-            return invalid_params("expect path at args[0]");
-        };
+        let path = get_arg!(args[0] as PathBuf);
         match self.compiler().on_export(kind, path) {
             Ok(res) => ok(to_value(res).unwrap()),
             Err(err) => internal_error("failed to export: {err}"),
@@ -70,11 +64,9 @@ impl CompileState {
 
     /// Focus main file to some path.
     pub fn change_entry(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(entry) = get_arg::<Option<PathBuf>>(&mut args, 0) else {
-            return invalid_params("expect path at args[0]");
-        };
+        let entry = get_arg!(args[0] as Option<PathBuf>);
         if let Err(err) = self.do_change_entry(entry.map(Into::into)) {
-            return internal_error(format!("cannot focus file: {err}"));
+            return internal_error(format!("cannot change entry: {err}"));
         };
         ok(JsonValue::Null)
     }

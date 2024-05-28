@@ -14,7 +14,6 @@ use std::path::Path;
 use async_lsp::{ErrorCode, ResponseError};
 use futures::future::BoxFuture;
 use lsp_types::request::{ExecuteCommand, Request};
-use serde::de::DeserializeOwned;
 use serde_json::{from_value, Value as JsonValue};
 
 pub enum TwoStage<Uninit, Inited> {
@@ -90,20 +89,33 @@ type ExecCmdMap<S> = HashMap<&'static str, ExecCmdHandler<S>>;
 type ResourceMap<S> = HashMap<&'static Path, ExecCmdHandler<S>>;
 
 /// Get a parsed command argument.
-/// Return `None` when no arg or parse failed.
-fn get_arg<'de, T: DeserializeOwned>(args: &mut Vec<JsonValue>, idx: usize) -> Option<T> {
-    args.get_mut(idx).and_then(|x| from_value(x.take()).ok())
+/// Return `INVALID_PARAMS` when no arg or parse failed.
+macro_rules! get_arg {
+    ($args:ident[$idx:expr] as $ty:ty) => {{
+        let arg = $args.get_mut($idx);
+        let arg = arg.and_then(|x| from_value::<$ty>(x.take()).ok());
+        match arg {
+            Some(v) => v,
+            None => {
+                return Box::pin(ready(Err(ResponseError::new(
+                    ErrorCode::INVALID_PARAMS,
+                    concat!("expect ", stringify!($ty), "at args[", $idx, "]"),
+                ))));
+            }
+        }
+    }};
 }
+use get_arg;
 
-/// Get a parsed command argument.
-/// Return default when no arg.
-/// Return `None` when parse failed.
-fn get_arg_or_default<'de, T: DeserializeOwned + Default>(
-    args: &mut Vec<JsonValue>,
-    idx: usize,
-) -> Option<T> {
-    match args.get_mut(idx) {
-        Some(arg) => from_value(arg.take()).ok(),
-        None => Some(Default::default()),
-    }
+/// Get a parsed command argument or default if no arg.
+/// Return `INVALID_PARAMS` when parse failed.
+macro_rules! get_arg_or_default {
+    ($args:ident[$idx:expr] as $ty:ty) => {{
+        if $idx >= $args.len() {
+            Default::default()
+        } else {
+            get_arg!($args[$idx] as $ty)
+        }
+    }};
 }
+use get_arg_or_default;

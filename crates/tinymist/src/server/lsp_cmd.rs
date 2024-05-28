@@ -60,10 +60,7 @@ impl LanguageState {
 
     /// Pin main file to some path.
     pub fn pin_document(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(entry) = get_arg::<Option<PathBuf>>(&mut args, 0) else {
-            return invalid_params("expect path at args[0]");
-        };
-        let entry = entry.map(Into::into);
+        let entry = get_arg!(args[0] as Option<PathBuf>).map(Into::into);
         Box::pin(async move {
             match self.pin_entry(entry).await {
                 Ok(_) => Ok(Some(JsonValue::Null)),
@@ -74,9 +71,7 @@ impl LanguageState {
 
     /// Focus main file to some path.
     pub fn focus_document(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(entry) = get_arg::<Option<PathBuf>>(&mut args, 0) else {
-            return invalid_params("expect path at args[0]");
-        };
+        let entry = get_arg!(args[0] as Option<PathBuf>);
         if !self.ever_manual_focusing {
             self.ever_manual_focusing = true;
             log::info!("first manual focusing is coming");
@@ -97,12 +92,8 @@ impl LanguageState {
         struct InitResult {
             entry_path: PathBuf,
         }
-        let Some(from_source) = get_arg::<String>(&mut args, 0) else {
-            return invalid_params("expect source at args[0]");
-        };
-        let Some(to_path) = get_arg::<Option<PathBuf>>(&mut args, 1) else {
-            return invalid_params("expect path at args[1]");
-        };
+        let from_source = get_arg!(args[0] as String);
+        let to_path = get_arg!(args[1] as Option<PathBuf>);
         let fut = self.primary().steal(move |c| {
             // Parse the package specification. If the user didn't specify the version,
             // we try to figure it out automatically by downloading the package index
@@ -147,9 +138,7 @@ impl LanguageState {
         &mut self,
         mut args: Vec<JsonValue>,
     ) -> ResponseFuture<ExecuteCommand> {
-        let Some(from_source) = get_arg::<String>(&mut args, 0) else {
-            return invalid_params("expect source at args[0]");
-        };
+        let from_source = get_arg!(args[0] as String);
         let fut = self.primary().steal(move |c| {
             // Parse the package specification. If the user didn't specify the version,
             // we try to figure it out automatically by downloading the package index
@@ -194,9 +183,7 @@ impl LanguageState {
             pub text_document: TextDocumentIdentifier,
             pub query: Vec<tinymist_query::InteractCodeContextQuery>,
         }
-        let Some(params) = get_arg::<InteractCodeContextParams>(&mut args, 0) else {
-            return invalid_params("expect code context queries at args[0]");
-        };
+        let params = get_arg!(args[0] as InteractCodeContextParams);
         let req = q::InteractCodeContextRequest {
             path: url_to_path(params.text_document.uri),
             query: params.query,
@@ -209,9 +196,7 @@ impl LanguageState {
         &mut self,
         mut args: Vec<JsonValue>,
     ) -> ResponseFuture<ExecuteCommand> {
-        let Some(path) = get_arg::<PathBuf>(&mut args, 0) else {
-            return invalid_params("expect path at args[0]");
-        };
+        let path = get_arg!(args[0] as PathBuf);
         let req = q::DocumentMetricsRequest { path: path.into() };
         query_state!(self, req)
     }
@@ -225,9 +210,7 @@ impl LanguageState {
     // Get static resources with help of tinymist service, for example, a
     /// static help pages for some typst function.
     pub fn get_resources(&mut self, mut args: Vec<JsonValue>) -> ResponseFuture<ExecuteCommand> {
-        let Some(path) = get_arg::<PathBuf>(&mut args, 0) else {
-            return invalid_params("expect path at args[0]");
-        };
+        let path = get_arg!(args[0] as PathBuf);
         let Some(handler) = self.resource_routes.get(path.as_path()) else {
             return method_not_found(format!("unknown resource: {path:?}"));
         };
